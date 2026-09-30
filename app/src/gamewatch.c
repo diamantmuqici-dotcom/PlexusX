@@ -86,6 +86,24 @@ int Gw_Process(void)
     if (g_exe[0]) lstrcpynW(cur, g_exe, 96);
 
     if (!game) {
+        /* user-defined custom game? */
+        int ci = -1;
+        if (Main_CustomMatch(g_exe, &ci)) {
+            wchar_t want[96];
+            const char *ex = Main_CustomExe(ci);
+            MultiByteToWideChar(CP_UTF8, 0, ex, -1, want, 96);
+            want[95] = 0;
+            for (wchar_t *p = want; *p; p++) *p = (wchar_t)towlower(*p);
+            if (lstrcmpW(g_matched, want) == 0) { free((void *)base); return 0; }
+            if (now - g_lastApplyTick < (DWORD)g_delayMs && g_lastApplyTick != 0) {
+                free((void *)base);
+                return 0;   /* debounce */
+            }
+            lstrcpynW(g_matched, want, 96);
+            g_lastApplyTick = now;
+            free((void *)base);
+            return 1;
+        }
         /* left a game: restore base look if we had applied a game look */
         if (g_restoreOnExit && g_matched[0] && _wcsicmp(g_matched, cur) != 0) {
             g_matched[0] = 0;

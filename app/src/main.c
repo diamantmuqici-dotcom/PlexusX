@@ -198,6 +198,243 @@ void Main_Notify(const wchar_t *msg)
     Main_Log(L"NOTIFY", msg);
 }
 
+/* hotkey state (declared here because Main_Save persists it; logic below) */
+#define CX_NHK 7
+static CxHotkey g_hk[CX_NHK];
+static int g_hkValid[CX_NHK];
+static wchar_t g_hkText[CX_NHK][64];
+static HWND g_hkHwnd;
+static char  g_hkPending[CX_NHK][64];   /* filled by Main_Load */
+static int   g_hkPendingValid[CX_NHK];
+
+/* ---------------- custom games (user-defined) ---------------- */
+
+typedef struct CustomGame {
+    char   name[48];
+    char   exe[48];   /* lower-case exe base name */
+    CxLook look;
+    int    used;
+} CustomGame;
+
+#define CX_MAX_CUSTOM 8
+static CustomGame g_custom[CX_MAX_CUSTOM];
+
+static CxJson *custom_look_json(const CxLook *l)
+{
+    CxJson *o = CxJson_NewObj();
+    CxJson_ObjSet(o, "saturation",  CxJson_NewNum(l->sat));
+    CxJson_ObjSet(o, "vibrance",    CxJson_NewNum(l->vibrance));
+    CxJson_ObjSet(o, "brightness",  CxJson_NewNum(l->brightness));
+    CxJson_ObjSet(o, "contrast",    CxJson_NewNum(l->contrast));
+    CxJson_ObjSet(o, "gamma",       CxJson_NewNum(l->gamma));
+    CxJson_ObjSet(o, "temperature", CxJson_NewNum(l->temperature));
+    CxJson_ObjSet(o, "tint",        CxJson_NewNum(l->tint));
+    CxJson_ObjSet(o, "red",         CxJson_NewNum(l->red));
+    CxJson_ObjSet(o, "green",       CxJson_NewNum(l->green));
+    CxJson_ObjSet(o, "blue",        CxJson_NewNum(l->blue));
+    CxJson_ObjSet(o, "shadows",     CxJson_NewNum(l->shadows));
+    CxJson_ObjSet(o, "highlights",  CxJson_NewNum(l->highlights));
+    CxJson_ObjSet(o, "black",       CxJson_NewNum(l->blacklevel));
+    CxJson_ObjSet(o, "white",       CxJson_NewNum(l->whitepoint));
+    CxJson_ObjSet(o, "sharpness",   CxJson_NewNum(l->sharpness));
+    CxJson_ObjSet(o, "clarity",     CxJson_NewNum(l->clarity));
+    CxJson_ObjSet(o, "intensity",   CxJson_NewNum(l->intensity));
+    CxJson_ObjSet(o, "hue",         CxJson_NewNum(l->hue));
+    CxJson_ObjSet(o, "dehaze",      CxJson_NewNum(l->dehaze));
+    CxJson_ObjSet(o, "enabled",     CxJson_NewBool(l->enabled));
+    return o;
+}
+
+static void json_custom_look(CxJson *o, CxLook *l)
+{
+    CxLook_Default(l);
+    if (!o) return;
+    l->sat        = CxJson_GetNum(o, "saturation", 100);
+    l->vibrance   = CxJson_GetNum(o, "vibrance", 100);
+    l->brightness = CxJson_GetNum(o, "brightness", 100);
+    l->contrast   = CxJson_GetNum(o, "contrast", 100);
+    l->gamma      = CxJson_GetNum(o, "gamma", 1.0);
+    l->temperature= CxJson_GetNum(o, "temperature", 6500);
+    l->tint       = CxJson_GetNum(o, "tint", 0);
+    l->red        = CxJson_GetNum(o, "red", 100);
+    l->green      = CxJson_GetNum(o, "green", 100);
+    l->blue       = CxJson_GetNum(o, "blue", 100);
+    l->shadows    = CxJson_GetNum(o, "shadows", 100);
+    l->highlights = CxJson_GetNum(o, "highlights", 100);
+    l->blacklevel = CxJson_GetNum(o, "black", 100);
+    l->whitepoint = CxJson_GetNum(o, "white", 100);
+    l->sharpness  = CxJson_GetNum(o, "sharpness", 100);
+    l->clarity    = CxJson_GetNum(o, "clarity", 100);
+    l->intensity  = CxJson_GetNum(o, "intensity", 100);
+    l->hue        = CxJson_GetNum(o, "hue", 0);
+    l->dehaze     = CxJson_GetNum(o, "dehaze", 100);
+    l->enabled    = CxJson_GetBool(o, "enabled", 1);
+    CxLook_Clamp(l);
+}
+
+int Main_CustomCount(void)
+{
+    int n = 0;
+    for (int i = 0; i < CX_MAX_CUSTOM; i++) if (g_custom[i].used) n++;
+    return n;
+}
+
+const char *Main_CustomName(int i)
+{
+    if (i < 0 || i >= CX_MAX_CUSTOM || !g_custom[i].used) return "";
+    return g_custom[i].name;
+}
+
+const char *Main_CustomExe(int i)
+{
+    if (i < 0 || i >= CX_MAX_CUSTOM || !g_custom[i].used) return "";
+    return g_custom[i].exe;
+}
+
+int Main_CustomGetLook(int i, CxLook *out)
+{
+    if (i < 0 || i >= CX_MAX_CUSTOM || !g_custom[i].used) return -1;
+    *out = g_custom[i].look;
+    return 0;
+}
+
+static int custom_valid_exename(const char *e)
+{
+    size_t n = strlen(e);
+    if (n < 3 || n > 44) return 0;
+    for (size_t i = 0; i < n; i++) {
+        char c = e[i];
+        int ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                 c == '.' || c == '-' || c == '_';
+        if (!ok) return 0;
+    }
+    return 1;   /* no path separators possible */
+}
+
+int Main_CustomAdd(const char *name, const char *exe, const CxLook *look)
+{
+    if (!name || !exe || !name[0]) return -1;
+    if (strlen(name) > 40) return -1;
+    char el[48];
+    strncpy(el, exe, 47);
+    el[47] = 0;
+    for (char *p = el; *p; p++) *p = (char)tolower((unsigned char)*p);
+    if (!custom_valid_exename(el)) return -1;
+    if (Main_CustomCount() >= CX_MAX_CUSTOM) return -3;
+    for (int i = 0; i < CX_MAX_CUSTOM; i++)
+        if (g_custom[i].used && _stricmp(g_custom[i].exe, el) == 0)
+            return -2;   /* duplicate */
+    int slot = -1;
+    for (int i = 0; i < CX_MAX_CUSTOM; i++)
+        if (!g_custom[i].used) { slot = i; break; }
+    if (slot < 0) return -3;
+    strncpy(g_custom[slot].name, name, 47);
+    g_custom[slot].name[47] = 0;
+    strncpy(g_custom[slot].exe, el, 47);
+    g_custom[slot].exe[47] = 0;
+    g_custom[slot].look = look ? *look : (CxLook){0};
+    if (!look) CxLook_Default(&g_custom[slot].look);
+    CxLook_Clamp(&g_custom[slot].look);
+    g_custom[slot].used = 1;
+    Main_Save();
+    return 0;
+}
+
+void Main_CustomRemove(int i)
+{
+    if (i < 0 || i >= CX_MAX_CUSTOM || !g_custom[i].used) return;
+    g_custom[i].used = 0;
+    /* compact */
+    for (int a = i, b = i + 1; b < CX_MAX_CUSTOM; a++, b++) {
+        if (g_custom[b].used) {
+            g_custom[a] = g_custom[b];
+            g_custom[b].used = 0;
+            g_custom[b].name[0] = 0;
+            g_custom[b].exe[0] = 0;
+        }
+    }
+    Main_Save();
+}
+
+/* exe may be wide; compared case-insensitively against stored base names */
+int Main_CustomMatch(const wchar_t *exe, int *outIdx)
+{
+    if (!exe || !exe[0]) return 0;
+    char base[64];
+    int n = WideCharToMultiByte(CP_UTF8, 0, exe, -1, base, 63, NULL, NULL);
+    if (n <= 1) return 0;
+    base[63] = 0;
+    base[n - 1] = 0;
+    for (char *p = base; *p; p++) *p = (char)tolower((unsigned char)*p);
+    for (int i = 0; i < CX_MAX_CUSTOM; i++)
+        if (g_custom[i].used && _stricmp(g_custom[i].exe, base) == 0) {
+            if (outIdx) *outIdx = i;
+            return 1;
+        }
+    return 0;
+}
+
+/* ---------------- tray context menu ---------------- */
+
+void Main_TrayMenu(void)
+{
+    if (!g_hwnd) return;
+    HMENU m = CreatePopupMenu();
+    if (!m) return;
+    POINT pt;
+    GetCursorPos(&pt);
+
+    wchar_t line[192];
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"ChromaX 2.0.0");
+    const wchar_t *fg = Gw_ForegroundExe();
+    if (fg && fg[0]) {
+        char *u8 = Main_Utf16ToUtf8Alloc(fg);
+        const CxGame *g = u8 ? CxGames_FindExe(u8) : NULL;
+        int ci = -1;
+        int custom = Main_CustomMatch(fg, &ci);
+        wchar_t nm[128] = { 0 };
+        if (g) {
+            MultiByteToWideChar(CP_UTF8, 0, g->name, -1, nm, 127);
+        } else if (custom) {
+            MultiByteToWideChar(CP_UTF8, 0, Main_CustomName(ci), -1, nm, 127);
+        } else {
+            lstrcpynW(nm, fg, 127);
+        }
+        nm[127] = 0;
+        wsprintfW(line, L"Foreground: %s", nm);
+        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, line);
+        free((void *)u8);
+    } else {
+        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Foreground: desktop");
+    }
+    wsprintfW(line, L"Saturation %d%%", (int)g_look.sat);
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 0, line);
+    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(m, MF_STRING | (g_xh.on ? MF_CHECKED : 0), 1, L"Crosshair");
+    AppendMenuW(m, MF_STRING | (g_gaming ? MF_CHECKED : 0), 2, L"Gaming mode");
+    AppendMenuW(m, MF_STRING, 3, L"Saturation boost (200%)");
+    AppendMenuW(m, MF_STRING, 4, L"Night mode");
+    AppendMenuW(m, MF_STRING, 5, L"Reset all changes");
+    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(m, MF_STRING, 6, IsWindowVisible(g_hwnd) ? L"Hide app" : L"Show app");
+    AppendMenuW(m, MF_STRING, 7, L"Exit");
+
+    SetForegroundWindow(g_hwnd);
+    int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                             pt.x, pt.y, 0, g_hwnd, NULL);
+    DestroyMenu(m);
+    switch (cmd) {
+    case 1: Main_HotkeyAction(100); break;
+    case 2: Main_HotkeyAction(102); break;
+    case 3: Main_HotkeyAction(104); break;
+    case 4: Main_HotkeyAction(105); break;
+    case 5: Main_HotkeyAction(101); break;
+    case 6: Main_HotkeyAction(103); break;
+    case 7: PostMessageW(g_hwnd, WM_CLOSE, 0, 0); break;
+    }
+    if (cmd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
 /* ---------------- settings persistence ---------------- */
 
 static void cfg_path(wchar_t *out, int sz)
@@ -265,6 +502,28 @@ void Main_Save(void)
     for (int i = 0; i < CxGames_Count(); i++)
         CxJson_ArrAdd(gl, CxJson_NewNum(Gw_GameLook(i)));
 
+    CxJson *hks = CxJson_NewArr();
+    {
+        char tmp[64];
+        for (int i = 0; i < CX_NHK; i++) {
+            if (g_hkValid[i]) {
+                CxHotkey_Format(&g_hk[i], tmp, 63);
+                tmp[63] = 0;
+                CxJson_ArrAdd(hks, CxJson_NewStr(tmp));
+            } else {
+                CxJson_ArrAdd(hks, CxJson_NewStr(""));
+            }
+        }
+    }
+    CxJson *cgs = CxJson_NewArr();
+    for (int i = 0; i < CX_MAX_CUSTOM; i++) {
+        if (!g_custom[i].used) continue;
+        CxJson *o = CxJson_NewObj();
+        CxJson_ObjSet(o, "name", CxJson_NewStr(g_custom[i].name));
+        CxJson_ObjSet(o, "exe", CxJson_NewStr(g_custom[i].exe));
+        CxJson_ObjSet(o, "look", custom_look_json(&g_custom[i].look));
+        CxJson_ArrAdd(cgs, o);
+    }
     CxJson_ObjSet(j, "app", CxJson_NewStr("ChromaX"));
     CxJson_ObjSet(j, "version", CxJson_NewNum(2));
     CxJson_ObjSet(j, "look", look);
@@ -273,6 +532,8 @@ void Main_Save(void)
     CxJson_ObjSet(j, "favorites", favs);
     CxJson_ObjSet(j, "gameLooks", gl);
     CxJson_ObjSet(j, "gaming", CxJson_NewBool(g_gaming));
+    CxJson_ObjSet(j, "hotkeys", hks);
+    CxJson_ObjSet(j, "customGames", cgs);
 
     char *s = CxJson_WriteStr(j);
     CxJson_Free(j);
@@ -371,6 +632,50 @@ void Main_Load(void)
                         for (int i = 0; i < gl->nchild && i < CxGames_Count(); i++) {
                             CxJson *el = gl->child[i].val;
                             if (el && el->type == CXJ_NUM) Gw_SetGameLook(i, (int)el->num);
+                        }
+                    }
+                    CxJson *hks = CxJson_Get(j, "hotkeys");
+                    if (hks && hks->type == CXJ_ARR) {
+                        for (int i = 0; i < hks->nchild && i < CX_NHK; i++) {
+                            CxJson *el = hks->child[i].val;
+                            if (el && el->type == CXJ_STR && el->str[0] &&
+                                (int)strlen(el->str) < 63) {
+                                strncpy(g_hkPending[i], el->str, 63);
+                                g_hkPending[i][63] = 0;
+                                g_hkPendingValid[i] = 1;
+                            }
+                        }
+                    }
+                    CxJson *cgs = CxJson_Get(j, "customGames");
+                    if (cgs && cgs->type == CXJ_ARR) {
+                        int slot = 0;
+                        for (int i = 0; i < cgs->nchild && slot < CX_MAX_CUSTOM; i++) {
+                            CxJson *o = cgs->child[i].val;
+                            if (!o) continue;
+                            const char *nm = CxJson_GetStr(o, "name", "");
+                            const char *ex = CxJson_GetStr(o, "exe", "");
+                            if (!nm || !nm[0] || !ex || !ex[0] || strlen(nm) > 40)
+                                continue;
+                            char el[48];
+                            strncpy(el, ex, 47);
+                            el[47] = 0;
+                            for (char *p = el; *p; p++)
+                                *p = (char)tolower((unsigned char)*p);
+                            if (!custom_valid_exename(el)) continue;
+                            int dup = 0;
+                            for (int k = 0; k < slot; k++)
+                                if (g_custom[k].used &&
+                                    _stricmp(g_custom[k].exe, el) == 0) dup = 1;
+                            if (dup) continue;
+                            CxLook lk;
+                            json_custom_look(CxJson_Get(o, "look"), &lk);
+                            strncpy(g_custom[slot].name, nm, 47);
+                            g_custom[slot].name[47] = 0;
+                            strncpy(g_custom[slot].exe, el, 47);
+                            g_custom[slot].exe[47] = 0;
+                            g_custom[slot].look = lk;
+                            g_custom[slot].used = 1;
+                            slot++;
                         }
                     }
                     g_gaming = CxJson_GetBool(j, "gaming", 0);
@@ -591,15 +896,14 @@ void Main_ApplyStartWithWin(int on)
 
 /* ---------------- global hotkeys ---------------- */
 
-static CxHotkey g_hk[4];
-static int g_hkValid[4];
-static wchar_t g_hkText[4][64];
-static HWND g_hkHwnd;
-
 static void hk_defaults(void)
 {
-    static const char *d[4] = { "Ctrl+Alt+X", "Ctrl+Alt+R", "Ctrl+Alt+G", "Ctrl+Alt+H" };
-    for (int i = 0; i < 4; i++) {
+    /* 100 crosshair, 101 reset, 102 gaming, 103 show/hide,
+     * 104 saturation boost, 105 night mode, 106 apply game profile */
+    static const char *d[CX_NHK] = { "Ctrl+Alt+X", "Ctrl+Alt+R", "Ctrl+Alt+G",
+                                     "Ctrl+Alt+H", "Ctrl+Alt+S", "Ctrl+Alt+N",
+                                     "Ctrl+Alt+P" };
+    for (int i = 0; i < CX_NHK; i++) {
         g_hkValid[i] = CxHotkey_Parse(d[i], &g_hk[i]) == 0;
         CxHotkey_Format(&g_hk[i], (char *)g_hkText[i], 64);
         g_hkText[i][63] = 0;
@@ -637,16 +941,28 @@ static int hk_vk(const CxHotkey *h)
     return 0;
 }
 
+int Main_HotkeyCount(void) { return CX_NHK; }
+
 void Main_HotkeysInit(void)
 {
     g_hkHwnd = g_hwnd;
     hk_defaults();
+    for (int i = 0; i < CX_NHK; i++) {
+        if (!g_hkPendingValid[i]) continue;
+        CxHotkey h;
+        if (CxHotkey_Parse(g_hkPending[i], &h) == 0) {
+            g_hk[i] = h;
+            g_hkValid[i] = 1;
+            CxHotkey_Format(&h, (char *)g_hkText[i], 64);
+            g_hkText[i][63] = 0;
+        }
+    }
     Main_HookHotkeys();
 }
 
 void Main_HookHotkeys(void)
 {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < CX_NHK; i++) {
         if (g_hkValid[i] && hk_vk(&g_hk[i]))
             RegisterHotKey(g_hkHwnd, 100 + i, hk_modmask(&g_hk[i]), hk_vk(&g_hk[i]));
     }
@@ -654,19 +970,19 @@ void Main_HookHotkeys(void)
 
 void Main_HotkeysFree(void)
 {
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < CX_NHK; i++)
         if (g_hkValid[i]) UnregisterHotKey(g_hkHwnd, 100 + i);
 }
 
 const wchar_t *Main_HotkeyText(int i)
 {
-    if (i < 0 || i >= 4) return L"(off)";
+    if (i < 0 || i >= CX_NHK) return L"(off)";
     return g_hkText[i];
 }
 
 int Main_HotkeySet(int i, const char *combo)
 {
-    if (i < 0 || i >= 4) return -1;
+    if (i < 0 || i >= CX_NHK) return -1;
     CxHotkey h;
     if (CxHotkey_Parse(combo, &h) != 0) return -1;
     UnregisterHotKey(g_hkHwnd, 100 + i);
@@ -703,6 +1019,45 @@ void Main_HotkeyAction(int id)
         if (IsWindowVisible(g_hwnd)) ShowWindow(g_hwnd, SW_HIDE);
         else { ShowWindow(g_hwnd, SW_SHOW); SetForegroundWindow(g_hwnd); }
         break;
+    case 104: {   /* saturation boost: 100 <-> 200 */
+        g_look.sat = (g_look.sat > 150.f) ? 100.f : 200.f;
+        g_look.enabled = 1;
+        CxLook_Clamp(&g_look);
+        Eng_ApplyLook(&g_look, -1, 1);
+        Main_Save();
+        Main_Notify(g_look.sat > 150.f ? L"Saturation boost: 200%"
+                                       : L"Saturation boost: off");
+        break;
+    }
+    case 105: {   /* night mode */
+        const CxLookDef *n = CxLooks_Find("Night");
+        if (n) {
+            g_look = n->look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            Eng_ApplyLook(&g_look, -1, 1);
+            Main_Save();
+            Main_Notify(L"Night mode applied");
+        }
+        break;
+    }
+    case 106: {   /* re-apply the active game profile */
+        int gi = Gw_CurrentGame();
+        if (gi >= 0) {
+            const CxGame *gg = CxGames_Get(gi);
+            int li = Gw_GameLook(gi);
+            if (li < 0 || li >= gg->nlooks) li = 0;
+            g_look = gg->looks[li].look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            Eng_ApplyLook(&g_look, -1, 1);
+            Main_Save();
+            Main_Notify(L"Game profile applied");
+        } else {
+            Main_Notify(L"No game profile active");
+        }
+        break;
+    }
     }
 }
 

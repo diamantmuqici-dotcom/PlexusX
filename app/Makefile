@@ -9,7 +9,7 @@ ZIGPY   ?= python3
 CC      := $(ZIGPY) -m ziglang cc
 CFLAGS  ?= -target x86_64-windows-gnu -O2 -std=c11 -Wall -Wextra \
            -DUNICODE -D_UNICODE -D_CRT_SECURE_NO_WARNINGS -municode
-LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomdlg32
+LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomdlg32 -lpsapi
 
 VER     := 2.0.0
 DIST    := ../dist/ChromaX-$(VER)-windows-x64

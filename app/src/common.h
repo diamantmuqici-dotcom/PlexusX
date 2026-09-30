@@ -240,6 +240,19 @@ void  Main_ApplyGameLook(int gameIdx, int lookIdx, int silent);
 wchar_t *Main_Utf8ToUtf16Alloc(const char *s);
 char    *Main_Utf16ToUtf8Alloc(const wchar_t *s);
 
+/* custom games (user-defined, main.c) */
+int          Main_CustomCount(void);
+const char  *Main_CustomName(int i);
+const char  *Main_CustomExe(int i);
+int          Main_CustomGetLook(int i, CxLook *out);
+int          Main_CustomAdd(const char *name, const char *exe,
+                            const CxLook *look);   /* 0 = ok */
+void         Main_CustomRemove(int i);
+int          Main_CustomMatch(const wchar_t *exe, int *outIdx); /* 1 = match */
+
+/* tray context menu (main.c) */
+void         Main_TrayMenu(void);
+
 extern HWND      g_hwnd;
 extern HINSTANCE g_inst;
 extern wchar_t   g_appdir[MAX_PATH];

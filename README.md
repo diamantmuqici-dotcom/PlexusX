@@ -84,8 +84,9 @@ password). Off means the port is closed.
 snapshot that restores automatically, and original gamma ramps written to disk before
 anything changes, so a crash can never leave the screen altered.
 
-**Hotkeys** — customizable, with conflict detection: crosshair toggle, reset all,
-gaming mode, show/hide.
+**Hotkeys** — seven global hotkeys, all customizable with conflict detection and
+persisted: crosshair toggle, reset all, gaming mode, show/hide, saturation boost,
+night mode, and apply the current game profile.
 
 **Diagnostics** — live readout of display state plus test patterns, exportable to a
 file.

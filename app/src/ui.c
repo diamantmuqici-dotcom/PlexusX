@@ -7,6 +7,7 @@
 #include "common.h"
 #include <commdlg.h>
 #include <shlobj.h>
+#include <psapi.h>
 
 /* ---------------- theme ---------------- */
 
@@ -87,11 +88,15 @@ enum {
     A_HOME_GAMING, A_HOME_XH, A_HOME_PHONE, A_HOME_PHONE_TOKEN,
     A_HOME_RESET, A_HOME_BACKUP, A_HOME_RESTORE_LKG, A_HOME_TEST1,
     A_HOME_TEST2, A_HOME_TEST3, A_HOME_TEST4,
+    A_HOME_GAME_APPLY, A_HOME_GAME_EDIT, A_HOME_QM, A_HOME_FAV,
+    A_HOME_SCENE,
     /* games */
     A_GAME_SELECT, A_GAME_LOOK, A_GAME_APPLY, A_GAME_FAV, A_GAME_AUTO,
+    A_GAME_CUSTOM_ADD, A_GAME_CUSTOM_DEL, A_GAME_CUSTOM_APPLY,
+    A_GAME_CUSTOM_EXE, A_GAME_CUSTOM_NAME,
     /* display */
     A_MON_SELECT, A_MODE_SELECT, A_MODE_APPLY, A_PRESET_RATIO, A_HDR_TOGGLE,
-    A_HDR_OPEN,
+    A_HDR_OPEN, A_DISP_MAX, A_SDR_W,
     /* color */
     A_SLIDER, A_COLOR_MASTER, A_COLOR_RESET_SYS, A_COLOR_RESET_MON,
     A_COLOR_MON, A_LOOK_CHIP,
@@ -675,6 +680,14 @@ static int g_curScene = CX_SCENE_FOREST;
 static int g_presetSel = -1;
 static float g_splitPos = 0.5f;
 static char  g_searchBuf[160];   /* utf-8 */
+static float g_sdrWhite = 100.f;
+
+static char *widget_buf(int id)
+{
+    for (int i = 0; i < g_nw; i++)
+        if (g_w[i].id == id) return g_w[i].buf;
+    return NULL;
+}
 
 static const wchar_t *MON_LABEL[9] = {
     L"All monitors", L"Monitor 1", L"Monitor 2", L"Monitor 3", L"Monitor 4",
@@ -692,6 +705,85 @@ static void sel_label(int m, int allMon)
 
 /* ---------------- HOME ---------------- */
 
+/* ---------------- HOME ---------------- */
+
+/* app CPU% since the last sample (whole-process, per-core basis) */
+static int perf_cpu_percent(void)
+{
+    static FILETIME ptPrev, stPrev;
+    static int havePrev = 0;
+    FILETIME cr, ex, pt, st;
+    if (!GetProcessTimes(GetCurrentProcess(), &cr, &ex, &pt, &st)) return 0;
+    if (!GetSystemTimes(&cr, &ex, &st)) return 0;
+    if (!havePrev) {
+        ptPrev = pt;
+        stPrev = st;
+        havePrev = 1;
+        return 0;
+    }
+    ULONGLONG p = ((ULONGLONG)pt.dwHighDateTime << 32) | pt.dwLowDateTime;
+    ULONGLONG t = ((ULONGLONG)st.dwHighDateTime << 32) | st.dwLowDateTime;
+    ULONGLONG pp = ((ULONGLONG)ptPrev.dwHighDateTime << 32) | ptPrev.dwLowDateTime;
+    ULONGLONG tp = ((ULONGLONG)stPrev.dwHighDateTime << 32) | stPrev.dwLowDateTime;
+    ptPrev = pt;
+    stPrev = st;
+    ULONGLONG dp = p - pp;
+    unsigned cores = 1;
+    {
+        DWORD_PTR pm, sm;
+        if (GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm)) {
+            for (DWORD_PTR m = pm; m; m &= m - 1) cores++;
+            if (cores > 1) cores--;   /* loop counts bits */
+        }
+    }
+    ULONGLONG dt = (t - tp) * (ULONGLONG)cores;
+    return dt > 0 ? (int)(dp * 100 / dt) : 0;
+}
+
+/* app working set in MB */
+static int perf_mem_mb(void)
+{
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc))
+        return (int)(pmc.WorkingSetSize / (1024 * 1024));
+    return 0;
+}
+
+/* resolve the foreground exe to (builtin game idx, custom game idx) */
+static int home_game_state(wchar_t *nameOut, int nameSz, int *builtinIdx,
+                           int *customIdx)
+{
+    *builtinIdx = -1;
+    *customIdx = -1;
+    const wchar_t *fg = Gw_ForegroundExe();
+    if (!fg || !fg[0]) {
+        lstrcpynW(nameOut, L"Desktop", nameSz);
+        return 0;
+    }
+    char *u8 = Main_Utf16ToUtf8Alloc(fg);
+    const CxGame *g = u8 ? CxGames_FindExe(u8) : NULL;
+    if (g) {
+        for (int i = 0; i < CxGames_Count(); i++)
+            if (CxGames_Get(i)->id == g->id) {
+                *builtinIdx = i;
+                break;
+            }
+        MultiByteToWideChar(CP_UTF8, 0, g->name, -1, nameOut, nameSz - 1);
+    } else {
+        int ci = -1;
+        int custom = Main_CustomMatch(fg, &ci);
+        if (custom) {
+            *customIdx = ci;
+            MultiByteToWideChar(CP_UTF8, 0, Main_CustomName(ci), -1,
+                                nameOut, nameSz - 1);
+        } else {
+            lstrcpynW(nameOut, fg, nameSz - 1);
+        }
+    }
+    free((void *)u8);
+    return 1;
+}
+
 static void build_home(void)
 {
     int x = 28, y = 20;
@@ -700,22 +792,58 @@ static void build_home(void)
     W_HEAD(-1, x, y, cw, 24, L"Overview", 0, 0);
     y += 34;
 
-    /* system card */
+    /* row 1: current game + display */
     {
+        wchar_t gname[128];
+        int bi = -1, ci = -1;
+        int isGame = home_game_state(gname, 128, &bi, &ci);
+        wchar_t body[190];
+        if (!isGame) {
+            lstrcpyW(body, L"No game in the foreground \u2014 desktop look active.");
+        } else if (bi >= 0) {
+            int li = Gw_GameLook(bi);
+            if (li < 0 || li >= CxGames_Get(bi)->nlooks) li = 0;
+            wchar_t look[128];
+            MultiByteToWideChar(CP_UTF8, 0, CxGames_Get(bi)->looks[li].name,
+                                -1, look, 127);
+            look[127] = 0;
+            wsprintfW(body, L"Profile: %s \u00b7 %s", look,
+                      g_settings.autoApply ? L"auto-apply on" : L"auto-apply off");
+        } else if (ci >= 0) {
+            wsprintfW(body, L"Custom game profile \u00b7 %s",
+                      g_settings.autoApply ? L"auto-apply on" : L"auto-apply off");
+        } else {
+            wsprintfW(body, L"App in foreground \u2014 no profile for this exe.");
+        }
+        W_CARD(A_HOME_GAME_EDIT, x, y, 545, 76, gname, body, isGame);
+        if (bi >= 0 || ci >= 0)
+            W_BTN(A_HOME_GAME_APPLY, x + 340, y + 44, 190, 26, L"Apply profile", 0, 0);
+        else
+            W_BTN(A_HOME_GAME_EDIT, x + 380, y + 44, 150, 26, L"Open games", 0, 0);
+
         const MonInfo *m0 = MonGet(0);
         HdrState hs;
         Hdr_Scan(&hs);
-        wchar_t body[160];
-        if (m0) {
-            wsprintfW(body,
-                L"%s \u00b7 %dx%d @ %d Hz \u00b7 %s",
-                m0->name, m0->res_w, m0->res_h, m0->hz,
-                hs.capable ? (hs.enabled ? L"HDR capable, ON" : L"HDR capable, off")
-                           : L"SDR display");
-        } else lstrcpyW(body, L"No display found");
-        W_CARD(-1, x, y, 545, 66, L"Display", body, 0);
-        x += 545 + 20;
         wchar_t body2[160];
+        if (m0) {
+            wsprintfW(body2,
+                      L"%s \u00b7 %dx%d @ %d Hz \u00b7 %s",
+                      m0->name, m0->res_w, m0->res_h, m0->hz,
+                      hs.capable ? (hs.enabled ? L"HDR ON" : L"HDR capable")
+                                 : L"SDR display");
+        } else {
+            lstrcpyW(body2, L"No display found");
+        }
+        W_CARD(-1, x + 565, y, 545, 76, L"Display", body2, 0);
+        y += 76 + 18;
+    }
+
+    /* row 2: performance + engine */
+    {
+        wchar_t body[160], body2[160];
+        wsprintfW(body, L"CPU %d%% \u00b7 memory %d MB (ChromaX process)",
+                  perf_cpu_percent(), perf_mem_mb());
+        W_CARD(-1, x, y, 545, 66, L"Performance", body, 0);
         const char *g = MonGpuName();
         wchar_t gw[128];
         MultiByteToWideChar(CP_UTF8, 0, g, -1, gw, 127);
@@ -724,39 +852,93 @@ static void build_home(void)
                   gw,
                   Eng_MagAvailable() ? L"layer ok" : L"layer unavailable",
                   Eng_RampAvailable() ? L"ok" : L"blocked");
-        W_CARD(-1, x, y, 545, 66, L"Engine", body2, 0);
+        W_CARD(-1, x + 565, y, 545, 66, L"Engine", body2, 0);
         y += 66 + 18;
     }
 
-    /* quick action row */
+    /* row 3: active look + color summary */
     {
-        W_CARD(-1, x, y, 545, 92, L"Gaming mode",
-               L"One tap: gaming preset look + crosshair defaults for FPS play.", 0);
-        W_TOGGLE(A_HOME_GAMING, x + 16, y + 52, 200, L"On", &g_gaming);
-        W_CARD(-1, x + 565, y, 545, 92, L"Crosshair overlay",
-               L"Desktop crosshair (topmost, click-through). Never injected into games.", 0);
-        W_TOGGLE(A_HOME_XH, x + 565 + 16, y + 52, 200, L"On", &g_xh.on);
-        y += 92 + 18;
-    }
-
-    /* active look */
-    {
-        wchar_t body[160];
+        wchar_t body[190];
         if (!g_look.enabled || CxLook_IsNeutral(&g_look))
             lstrcpyW(body, L"Neutral \u2014 the display is untouched.");
-        else {
+        else
             wsprintfW(body,
-                L"Sat %d \u00b7 Vib %d \u00b7 Temp %.0fK \u00b7 Bri %d \u00b7 Con %d \u00b7 Gam %.2f \u00b7 Shadows %d",
-                (int)g_look.sat, (int)g_look.vibrance, g_look.temperature,
-                (int)g_look.brightness, (int)g_look.contrast, g_look.gamma,
-                (int)g_look.shadows);
-        }
-        W_CARD(-1, x, y, 545, 78, L"Active look", body, 0);
-        W_BTN(A_HOME_RESET, x + 300, y + 46, 220, 26, L"Reset all changes", 0, 0);
-        y += 78 + 18;
+                      L"Sat %d \u00b7 Vib %d \u00b7 Temp %.0fK \u00b7 Gam %.2f",
+                      (int)g_look.sat, (int)g_look.vibrance, g_look.temperature,
+                      g_look.gamma);
+        W_CARD(-1, x, y, 545, 66, L"Active look", body, 0);
+        W_BTN(A_HOME_RESET, x + 300, y + 34, 230, 26, L"Reset all changes", 0, 0);
+        wchar_t body2[190];
+        wsprintfW(body2, L"Bri %d \u00b7 Con %d \u00b7 Shadows %d \u00b7 High %d \u00b7 Sharp %d \u00b7 Clarity %d",
+                  (int)g_look.brightness, (int)g_look.contrast, (int)g_look.shadows,
+                  (int)g_look.highlights, (int)g_look.sharpness, (int)g_look.clarity);
+        W_CARD(-1, x + 565, y, 545, 66, L"Color summary", body2, 0);
+        y += 66 + 18;
     }
 
-    /* backup + last known good */
+    /* row 4: quick modes */
+    {
+        static const char *qnames[6] = { "Competitive", "Natural", "Night",
+                                         "Vibrant", "Cinematic", "Ultra Vibrant" };
+        W_HEAD(-1, x, y, cw, 20, L"Quick modes", 0, 0);
+        y += 24;
+        for (int i = 0; i < 6; i++) {
+            wchar_t wname[96];
+            MultiByteToWideChar(CP_UTF8, 0, qnames[i], -1, wname, 95);
+            W_BTN(A_HOME_QM + i * 100, x + i * 182, y, 172, 32, wname, 0, 0);
+        }
+        y += 32 + 18;
+    }
+
+    /* row 5: large live preview + scene chips */
+    {
+        W_HEAD(-1, x, y, 700, 20, L"Preview of the current look (exact engine maths)", 0, 0);
+        int pw = 700, ph = 240;
+        W_SCENE(-1, x, y + 26, pw, ph, L"", 0, 0);
+        g_w[g_nw - 1].scene = g_curScene;
+        for (int s = 0; s < CX_N_SCENE; s++) {
+            int cx2 = x + pw + 12 + (s % 3) * 132;
+            int cy2 = y + 26 + (s / 3) * 88;
+            W_SCENE(A_HOME_SCENE + s * 100, cx2, cy2, 124, 80, L"", s, 0);
+            g_w[g_nw - 1].scene = s;
+        }
+        y += 26 + ph + 14;
+    }
+
+    /* row 6: favorites + quick toggles */
+    {
+        W_HEAD(-1, x, y, 700, 20, L"Favorite games", 0, 0);
+        y += 24;
+        int nf = Main_FavoriteCount();
+        if (nf == 0) {
+            W_DIM(-1, x, y, 1090, 20,
+                  L"Star a game on the Games page and it lands here for one-tap access.", 0, 0);
+            y += 24;
+        } else {
+            int bx = x;
+            for (int i = 0; i < nf && i < 8; i++) {
+                int gi = Main_FavoriteAt(i);
+                if (gi < 0 || gi >= CxGames_Count()) continue;
+                const CxGame *g = CxGames_Get(gi);
+                wchar_t wname[96];
+                MultiByteToWideChar(CP_UTF8, 0, g->name, -1, wname, 95);
+                int wpx = 90 + 7 * (int)lstrlenW(wname);
+                if (bx + wpx > x + 1110) break;
+                W_BTN(A_HOME_FAV + i * 100, bx, y, wpx, 30, wname, 0, 0);
+                bx += wpx + 10;
+            }
+            y += 30 + 8;
+        }
+        W_CARD(-1, x, y, 545, 66, L"Gaming mode",
+               L"One tap: gaming preset look + crosshair defaults for FPS play.", 0);
+        W_TOGGLE(A_HOME_GAMING, x + 16, y + 36, 200, L"On", &g_gaming);
+        W_CARD(-1, x + 565, y, 545, 66, L"Crosshair overlay",
+               L"Desktop crosshair (topmost, click-through). Never injected into games.", 0);
+        W_TOGGLE(A_HOME_XH, x + 565 + 16, y + 36, 200, L"On", &g_xh.on);
+        y += 66 + 18;
+    }
+
+    /* row 7: backup + phone */
     {
         W_CARD(-1, x, y, 545, 78, L"Backup / restore",
                L"Snapshots of every setting in %APPDATA%\\ChromaX. Last known good restores automatically after a crash.", 0);
@@ -767,10 +949,11 @@ static void build_home(void)
                L"LAN HTTP with a random pairing token. No telemetry, ever.", 0);
         W_BTN(A_HOME_PHONE, x + 10, y + 46, 130, 26, L"Toggle", 0, 0);
         W_BTN(A_HOME_PHONE_TOKEN, x + 150, y + 46, 130, 26, L"Show token", 0, 0);
+        x = 28;
         y += 78 + 18;
     }
 
-    /* test patterns */
+    /* row 8: test patterns */
     {
         W_HEAD(-1, x, y, cw, 22, L"Test patterns", 0, 0);
         y += 26;
@@ -781,7 +964,7 @@ static void build_home(void)
         y += 34 + 18;
     }
 
-    /* recent changes */
+    /* row 9: recent changes */
     {
         W_HEAD(-1, x, y, cw, 22, L"Recent changes", 0, 0);
         y += 26;
@@ -877,6 +1060,32 @@ static void build_games(void)
         W_GHOST(A_GAME_AUTO, x + 196, y, 300, 36, L"Use on auto-apply for this game", 0, 0);
         W_GHOST(A_GAME_FAV, x + 512, y, 180, 36,
                 Main_IsFavorite(g->id) ? L"\u2605 Unfavorite" : L"\u2606 Favorite", 0, 0);
+        y += 36 + 18;
+
+        /* custom games */
+        W_HEAD(-1, x, y, cw, 20, L"Custom games (matched by exe name, saved with your settings)", 0, 0);
+        y += 24;
+        W_SEARCH(A_GAME_CUSTOM_NAME, x, y, 250, 32, L"game name\u2026", 0, 0);
+        W_SEARCH(A_GAME_CUSTOM_EXE, x + 262, y, 300, 32, L"exe (e.g. mygame.exe)", 0, 0);
+        W_PRI(A_GAME_CUSTOM_ADD, x + 574, y, 120, 32, L"Add", 0, 0);
+        y += 44;
+        int nc = Main_CustomCount();
+        for (int i = 0; i < nc; i++) {
+            wchar_t nm[128], ex[128];
+            MultiByteToWideChar(CP_UTF8, 0, Main_CustomName(i), -1, nm, 127);
+            nm[127] = 0;
+            MultiByteToWideChar(CP_UTF8, 0, Main_CustomExe(i), -1, ex, 127);
+            ex[127] = 0;
+            W_ROW(-1, x, y, 560, 40, nm, ex, 0);
+            W_BTN(A_GAME_CUSTOM_APPLY + i * 100, x + 580, y, 140, 36, L"Apply", 0, 0);
+            W_BTN(A_GAME_CUSTOM_DEL + i * 100, x + 732, y, 110, 36, L"Remove", 0, 0);
+            y += 46;
+        }
+        if (nc == 0) {
+            W_DIM(-1, x, y, cw, 20,
+                  L"None yet \u2014 add a game by exe name; it appears on Home and auto-applies its saved profile.", 0, 0);
+            y += 24;
+        }
     }
 }
 
@@ -915,6 +1124,11 @@ static void build_display(void)
             W_BTN(A_HDR_TOGGLE, x + 10, y + 32, 170, 24,
                   hs.enabled ? L"Turn HDR off" : L"Turn HDR on", 0, 0);
         W_BTN(A_HDR_OPEN, x + 190, y + 32, 170, 24, L"Windows HDR settings", 0, 0);
+        if (hs.capable) {
+            W_DIM(-1, x, y + 62, cw, 18,
+                  L"HDR shows washed out? SDR apps are tone-mapped in HDR mode \u2014 raise the SDR white level below, or close full-screen SDR apps before judging.", 0, 0);
+            y += 22;
+        }
         y += 60 + 16;
 
         /* modes */
@@ -942,9 +1156,17 @@ static void build_display(void)
             int rows = (n < 24 ? n : 24 + 2) / 4;
             y += rows * 46 + 10;
             W_PRI(A_MODE_APPLY, x, y, 200, 34, L"Apply to this monitor", 0, 0);
-            W_DIM(-1, x + 220, y + 8, cw - 220, 20,
+            W_BTN(A_DISP_MAX, x + 212, y, 170, 34, L"MAX AVAILABLE", 0, 0);
+            W_DIM(-1, x + 394, y + 8, cw - 394, 20,
                   L"Pre-tested before applying; Windows keeps its own revert prompt; ChromaX rolls back on failure.", 0, 0);
             y += 44;
+            if (hs.sdr_white_supported) {
+                if (hs.sdr_white > 0) g_sdrWhite = hs.sdr_white;
+                W_SLIDER(A_SDR_W, x, y, 420, L"SDR white level (nits, HDR on)", &g_sdrWhite, 100, 1000);
+                W_DIM(-1, x + 440, y + 8, cw - 440, 20,
+                      L"Controls how bright SDR content looks while HDR is on (Windows tone-mapping).", 0, 0);
+                y += 46;
+            }
         }
     }
 
@@ -1022,11 +1244,12 @@ static void build_color(void)
         W_SLIDER(A_SLIDER, x + 760, y + 88, 350, L"Black level", &g_look.blacklevel, 0, 200);
         W_SLIDER(A_SLIDER, x, y + 132, 360, L"White point", &g_look.whitepoint, 0, 200);
         W_SLIDER(A_SLIDER, x + 380, y + 132, 360, L"Clarity", &g_look.clarity, 0, 200);
-        W_SLIDER(A_SLIDER, x + 760, y + 132, 350, L"Dehaze", &g_look.dehaze, 0, 200);
+        W_SLIDER(A_SLIDER, x + 760, y + 132, 350, L"Sharpness (preview)", &g_look.sharpness, 0, 200);
         W_SLIDER(A_SLIDER, x, y + 176, 360, L"Red", &g_look.red, 0, 200);
         W_SLIDER(A_SLIDER, x + 380, y + 176, 360, L"Green", &g_look.green, 0, 200);
         W_SLIDER(A_SLIDER, x + 760, y + 176, 350, L"Blue", &g_look.blue, 0, 200);
-        W_GHOST(A_COLOR_RESET_MON, x, y + 224, 200, 24, L"Reset monitor curves", 0, 0);
+        W_SLIDER(A_SLIDER, x, y + 220, 360, L"Dehaze", &g_look.dehaze, 0, 200);
+        W_GHOST(A_COLOR_RESET_MON, x + 380, y + 224, 200, 24, L"Reset monitor curves", 0, 0);
         y += 224 + 16;
     }
 
@@ -1191,9 +1414,11 @@ static void build_automation(void)
     /* hotkeys */
     W_HEAD(-1, x, y, cw, 20, L"Global hotkeys", 0, 0);
     y += 24;
-    const wchar_t *hknames[4] = { L"Toggle crosshair", L"Reset all changes",
-                                  L"Toggle gaming mode", L"Show/hide ChromaX" };
-    for (int i = 0; i < 4; i++) {
+    const wchar_t *hknames[7] = { L"Toggle crosshair", L"Reset all changes",
+                                  L"Toggle gaming mode", L"Show/hide ChromaX",
+                                  L"Saturation boost (200%)", L"Night mode",
+                                  L"Apply current game profile" };
+    for (int i = 0; i < 7; i++) {
         W_LABEL(-1, x, y, 420, 26, hknames[i], 0, 0);
         W_GHOST(A_AUTO_HK + i * 100, x + 440, y - 2, 200, 30,
                 Main_HotkeyText(i), 0, 0);
@@ -1448,6 +1673,67 @@ static void apply_current_look(const wchar_t *source)
 
 static void on_action(int id, int arg1)
 {
+    /* range-checked chip grids (id = base + idx * 100) */
+    if (id >= A_HOME_QM && id < A_HOME_QM + 600) {
+        static const char *qnames[6] = { "Competitive", "Natural", "Night",
+                                         "Vibrant", "Cinematic", "Ultra Vibrant" };
+        int i = (id - A_HOME_QM) / 100;
+        const CxLookDef *d = CxLooks_Find(qnames[i]);
+        if (d) {
+            g_look = d->look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            apply_current_look(L"quick mode");
+            wchar_t t[128];
+            MultiByteToWideChar(CP_UTF8, 0, d->name, -1, t, 127);
+            t[127] = 0;
+            wsprintfW(t, L"Quick mode: %s", t);
+            toast(t);
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_HOME_FAV && id < A_HOME_FAV + 800) {
+        int gi = Main_FavoriteAt((id - A_HOME_FAV) / 100);
+        if (gi >= 0 && gi < CxGames_Count()) {
+            g_page = PG_GAMES;
+            g_selGame = gi;
+            g_scroll = 0;
+            refresh();
+        }
+        return;
+    }
+    if ((id >= A_SCENE && id < A_SCENE + 1000) ||
+        (id >= A_HOME_SCENE && id < A_HOME_SCENE + 1000)) {
+        int base = (id >= A_HOME_SCENE) ? A_HOME_SCENE : A_SCENE;
+        int sc = (id - base) / 100;
+        if (sc >= 0 && sc < CX_N_SCENE) {
+            Prev_Scene(sc);
+            g_curScene = sc;
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_GAME_CUSTOM_APPLY && id < A_GAME_CUSTOM_APPLY + 800) {
+        int i = (id - A_GAME_CUSTOM_APPLY) / 100;
+        CxLook lk;
+        if (Main_CustomGetLook(i, &lk) == 0) {
+            g_look = lk;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            apply_current_look(L"custom game");
+            toast(L"Custom profile applied");
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_GAME_CUSTOM_DEL && id < A_GAME_CUSTOM_DEL + 800) {
+        Main_CustomRemove((id - A_GAME_CUSTOM_DEL) / 100);
+        toast(L"Custom game removed");
+        refresh();
+        return;
+    }
+
     switch (id) {
     case A_NAV:
         g_page = arg1;
@@ -1496,6 +1782,42 @@ static void on_action(int id, int arg1)
         Main_ResetAllChanges();
         refresh();
         return;
+    case A_HOME_GAME_EDIT: {
+        wchar_t gname[128];
+        int bi = -1, ci = -1;
+        home_game_state(gname, 128, &bi, &ci);
+        if (bi >= 0) g_selGame = bi;
+        g_page = PG_GAMES;
+        g_scroll = 0;
+        refresh();
+        return;
+    }
+    case A_HOME_GAME_APPLY: {
+        wchar_t gname[128];
+        int bi = -1, ci = -1;
+        home_game_state(gname, 128, &bi, &ci);
+        if (bi >= 0) {
+            const CxGame *gg = CxGames_Get(bi);
+            int li = Gw_GameLook(bi);
+            if (li < 0 || li >= gg->nlooks) li = 0;
+            g_look = gg->looks[li].look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            apply_current_look(L"home: apply profile");
+            toast(L"Game profile applied");
+        } else if (ci >= 0) {
+            CxLook lk;
+            if (Main_CustomGetLook(ci, &lk) == 0) {
+                g_look = lk;
+                g_look.enabled = 1;
+                CxLook_Clamp(&g_look);
+                apply_current_look(L"home: apply profile");
+                toast(L"Custom profile applied");
+            }
+        }
+        refresh();
+        return;
+    }
     case A_HOME_BACKUP:
     case A_TL_BACKUP:
         Main_Backup(L"manual");
@@ -1517,6 +1839,27 @@ static void on_action(int id, int arg1)
     /* ---------------- games ---------------- */
     case A_SEARCH:
         return;   /* focus set in WndProc */
+    case A_GAME_CUSTOM_ADD: {
+        char name[160] = { 0 }, exeb[160] = { 0 };
+        char *bn = widget_buf(A_GAME_CUSTOM_NAME);
+        char *be = widget_buf(A_GAME_CUSTOM_EXE);
+        if (bn) lstrcpynA(name, bn, 60);
+        if (be) lstrcpynA(exeb, be, 60);
+        int r = Main_CustomAdd(name, exeb, &g_look);
+        if (r == 0) {
+            if (bn) bn[0] = 0;
+            if (be) be[0] = 0;
+            toast(L"Custom game added");
+            refresh();
+        } else if (r == -2) {
+            toast(L"A custom game with that exe already exists");
+        } else if (r == -3) {
+            toast(L"Custom game limit reached (8)");
+        } else {
+            toast(L"Invalid name or exe \u2014 use a base name like mygame.exe");
+        }
+        return;
+    }
     case A_GAME_AUTO:
         if (g_page == PG_GAMES) {
             Gw_SetGameLook(g_selGame, g_selLook[g_selGame]);
@@ -1574,6 +1917,28 @@ static void on_action(int id, int arg1)
         refresh();
         return;
     }
+    case A_DISP_MAX: {
+        int i = Modes_FindMode(g_selMon, 0, 0, -1);
+        if (i < 0) {
+            toast(L"No modes reported for this monitor");
+        } else {
+            g_selMode[g_selMon] = i;
+            if (Modes_Apply(g_selMon, i) == 0) {
+                ModeInfo *md = Modes_GetFor(g_selMon, i);
+                wchar_t t[96];
+                wsprintfW(t, L"Max refresh applied: %dx%d @ %d Hz",
+                          md->w, md->h, md->hz);
+                toast(t);
+                MonRefresh();
+                Modes_Refresh();
+                apply_current_look(L"display change");
+            } else {
+                toast(L"Max refresh not accepted by the driver \u2014 no change made");
+            }
+        }
+        refresh();
+        return;
+    }
     case A_HDR_TOGGLE: {
         HdrState hs;
         Hdr_ScanFor(g_selMon, &hs);
@@ -1618,12 +1983,6 @@ static void on_action(int id, int arg1)
         refresh();
         return;
     }
-    case A_SCENE:
-        Prev_Scene(id - A_SCENE);
-        g_curScene = id - A_SCENE;
-        refresh();
-        return;
-
     /* ---------------- crosshair ---------------- */
     case A_XH_ON:
         g_xh.on = !g_xh.on;
@@ -2014,6 +2373,14 @@ static void slider_apply(Widget *p)
     } else if (v == (intptr_t)&g_settings.delayMs) {
         Gw_SetDelayMs(g_settings.delayMs);
         Main_Save();
+    } else if (v == (intptr_t)&g_sdrWhite) {
+        if (Hdr_SetSdrWhite(g_sdrWhite) == 0) {
+            wchar_t t[64];
+            wsprintfW(t, L"SDR white level: %.0f nits", g_sdrWhite);
+            toast(t);
+        } else {
+            toast(L"Driver refused the SDR white level change");
+        }
     }
 }
 
@@ -2299,6 +2666,19 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
             CxLook_Clamp(&g_look);
             apply_current_look(L"game watch");
             Main_Log(L"INFO", fg);
+        } else if (!g && g_settings.autoApply) {
+            int ci = -1;
+            if (Main_CustomMatch(fg, &ci)) {
+                CxLook lk;
+                if (Main_CustomGetLook(ci, &lk) == 0) {
+                    if (!haveBase) { g_baseLook = g_look; haveBase = 1; }
+                    g_look = lk;
+                    g_look.enabled = 1;
+                    CxLook_Clamp(&g_look);
+                    apply_current_look(L"game watch");
+                    Main_Log(L"INFO", fg);
+                }
+            }
         } else if (!g && g_settings.restoreOnExit) {
             if (haveBase) {
                 g_look = g_baseLook;
@@ -2310,6 +2690,11 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
         refresh();
         return 0;
     }
+
+    case WM_APP_TRAY:
+        if ((UINT)l == WM_LBUTTONUP || (UINT)l == WM_RBUTTONUP)
+            Main_TrayMenu();
+        return 0;
 
     case WM_HOTKEY:
         Main_HotkeyAction((int)w);
