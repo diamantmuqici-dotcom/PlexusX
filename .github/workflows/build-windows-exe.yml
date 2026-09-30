@@ -90,14 +90,23 @@ jobs:
 
           What it never does: read game memory, edit game files, inject code, install drivers, or phone home.
           EOF
-          if gh release view "$VER" >/dev/null 2>&1; then
-            gh release upload "$VER" dist/ChromaX.exe dist/SHA256SUMS.txt \
-              dist/ChromaX-setup.bat dist/ChromaX-uninstall.bat --clobber
-          else
+          # Create the release first (no assets), then upload assets with
+          # retries: uploads.github.com occasionally drops connections, and a
+          # half-uploaded release is worse than a retryable one.
+          if ! gh release view "$VER" >/dev/null 2>&1; then
             gh release create "$VER" \
               --title "ChromaX $VER" \
               --notes-file RELEASE_NOTES.md \
-              --target "${GITHUB_SHA}" \
-              dist/ChromaX.exe dist/SHA256SUMS.txt \
-              dist/ChromaX-setup.bat dist/ChromaX-uninstall.bat
+              --target "${GITHUB_SHA}"
           fi
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$VER" dist/ChromaX.exe dist/SHA256SUMS.txt \
+                 dist/ChromaX-setup.bat dist/ChromaX-uninstall.bat --clobber; then
+              echo "assets uploaded on attempt $attempt"
+              exit 0
+            fi
+            echo "asset upload attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          echo "::error::release asset upload failed after 5 attempts"
+          exit 1
