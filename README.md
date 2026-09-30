@@ -1,77 +1,185 @@
-# ChromaX
+# PlexusX — Windows Gaming Display & Visual Optimization Center
 
-**Three times the colour. Every game. €0.**
+[![Build Windows Executable](https://github.com/diamantmuqici-dotcom/PlexusX/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/diamantmuqici-dotcom/PlexusX/actions/workflows/build-windows-exe.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20x64-0078d4.svg)]()
+[![Version](https://img.shields.io/badge/Version-v2.0.0-c6ff3d.svg)]()
 
-A free, open, portable monitor-colour engine for Windows 10/11 — saturation up to
-**300%**, scene presets, per-game auto-switching, a crosshair designer, resolution
-& refresh control and LAN phone control. One 260 KB exe. No account, no card, no
-premium tier, no telemetry.
+> **Your Display. Your Colors. Your Games.**  
+> A free, high-performance Windows gaming display and visual control center.  
+> Pushes monitor saturation to **300%**, with smart vibrance, 16-bit hardware GPU gamma ramps, 20+ game profiles, an anti-aliased desktop crosshair, stretched 4:3 display modes, secure LAN phone remote control, and full-screen monitor test patterns.
 
-> Changes what your monitor shows. Never touches the game: no memory reads, no file
-> edits, no DLL injection, no driver, no admin.
+**100% Free · Zero Cheating · Zero DLL Injection · Anti-Cheat Safe**
 
-## Repository layout
+---
 
-| Path        | What it is                                                        |
-|-------------|-------------------------------------------------------------------|
-| `app/`      | The Windows app — plain C, Win32, hand-drawn dark UI.              |
-| `site/`     | The marketing site (static HTML/CSS/JS) + the downloadable exe.    |
-| `app/Makefile` | Cross-compiles the exe with `zig cc` (`x86_64-windows-gnu`).   |
-| `LICENSE`   | Apache-2.0.                                                       |
+## ⚡ What Makes PlexusX Different
 
-## Building the exe
+Most gaming monitor tools fall into one of two traps: they are either rudimentary 1-slider utilities, or commercial software bloated with artificial paywalls, accounts, subscription prompts, and background telemetry.
 
-Requires Python 3 and the `ziglang` PyPI package (zig bundles the mingw headers and
-linker — no Visual Studio needed):
+**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (306 KB) with near-zero idle CPU footprint:
 
-```bash
-pip install ziglang
-cd app && make          # writes site/download/ChromaX.exe
+* **300% Saturation Engine** — Neutral 100% up to 300% application boost, combined with Rec.709-weighted smart vibrance that protects already saturated tones and skin tones.
+* **Direct Hardware GPU Gamma Ramps** — 16-bit lookup tables written via `SetDeviceGammaRamp` providing shadow toe lift, highlight shoulder compression, black level offset, and clarity/dehaze S-curves.
+* **20+ Per-Game Starting Profiles** — Rust, CS2, Fortnite, Valorant, Escape from Tarkov, PUBG, Apex Legends, Call of Duty / Warzone, Overwatch 2, Rainbow Six Siege, Minecraft, GTA V, DayZ, Helldivers 2, The Finals, and custom game executables.
+* **Stretched 4:3 & Refresh Rate Manager** — Instant switching to popular competitive stretched resolutions (`1280x960`, `1440x1080`, `1600x1200`), 16:10, and high-refresh modes (up to 500Hz+) with automatic rollback safety.
+* **Desktop Crosshair Overlay** — 4x supersampled layered overlay (`WS_EX_LAYERED | WS_EX_TRANSPARENT`). 8 shapes (Cross, Dot, Circle, Square, Plus, Chevron, T, T-Type), custom colors, and hotkey toggle (`Ctrl+Alt+X`).
+* **Multi-Monitor Management** — Target specific monitors independently (`DISPLAY1`, `DISPLAY2`) or synchronize across all displays. Includes a full-screen "Identify Displays" overlay.
+* **Event-Driven Foreground Automation** — Automatically detects when a game launches or receives focus, applies the assigned look, and restores your desktop profile upon exiting.
+* **LAN Phone Remote Control** — Control display colors and toggle presets from your smartphone on the same Wi-Fi network (`port 8777`). Protected with a random 4-digit pairing PIN.
+* **Monitor Test Patterns & Diagnostics** — Built-in test patterns for pure black (OLED/backlight bleed), pure white (uniformity), RGB subpixel inspection, 16-step gradients, and Gamma 2.2 calibration.
+* **Zero Telemetry & Local Storage** — No analytics, no phone-home, no accounts. All configurations are stored locally in plain INI/JSON.
+
+---
+
+## 📸 Application Screenshots
+
+<div align="center">
+  <h3>Home Dashboard with Real-Time Split Preview</h3>
+  <img src="site/media/screenshot-home.png" width="850" alt="PlexusX Home Dashboard">
+  <br><br>
+  <h3>Global Color Engine & Hardware Gamma Curve</h3>
+  <img src="site/media/screenshot-color.png" width="850" alt="PlexusX Color Engine">
+  <br><br>
+  <h3>Game Profiles Library (20+ Pre-Configured Titles)</h3>
+  <img src="site/media/screenshot-games.png" width="850" alt="PlexusX Games Library">
+  <br><br>
+  <h3>Anti-Aliased Desktop Crosshair Overlay</h3>
+  <img src="site/media/screenshot-crosshair.png" width="850" alt="PlexusX Crosshair Designer">
+</div>
+
+---
+
+## 🛡 Anti-Cheat & Fair Play Architecture
+
+**PlexusX is strictly a display and desktop optimization utility.**
+
+It operates in the exact same legal space as the NVIDIA Control Panel, AMD Software: Adrenalin Edition, Intel Graphics Command Center, or your monitor's physical OSD buttons:
+
+* ❌ **Never** injects DLLs or hooks game processes.
+* ❌ **Never** reads, writes, or scans game memory.
+* ❌ **Never** modifies game installation files or shaders.
+* ❌ **Never** implements aimbots, recoil macros, ESP, or game logic alterations.
+* ❌ **Never** requires administrator privileges or kernel drivers.
+* ✔ **Legitimate Windows APIs Only**:
+  * **Windows Magnification API** (`MagSetFullscreenColorEffect`) for fullscreen color transformation matrices.
+  * **GDI Gamma Ramp API** (`SetDeviceGammaRamp`) for direct display lookup table adjustments.
+  * **Win32 Layered Windows** (`UpdateLayeredWindow`) for desktop crosshair rendering.
+  * **Win32 Window Monitoring** (`GetForegroundWindow` & `QueryFullProcessImageNameW`) for process matching without open memory handles.
+
+---
+
+## 📦 Downloads & Verification
+
+| Deliverable | Description | Size | SHA-256 Checksum |
+| :--- | :--- | :---: | :--- |
+| **`PlexusX.exe`** | Standalone Portable Executable | 306 KB | `39062a3a95619c4960a995cdabfe8fdc1dff7d2a70a506d49a50f5df57782e89` |
+| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 557 KB | `1096eaad9e914e68c8acaea490b1e6427a388ac46a0a712311592bee4e17a644` |
+| **`ChromaX.exe`** | Backwards-Compatible Alias | 306 KB | `39062a3a95619c4960a995cdabfe8fdc1dff7d2a70a506d49a50f5df57782e89` |
+
+### Verifying File Integrity
+
+#### Windows PowerShell:
+```powershell
+Get-FileHash .\PlexusX.exe -Algorithm SHA256
 ```
 
-The linker emits a CONSOLE-subsystem PE; `tools/fixsub.py` flips it to GUI so no
-console window appears at runtime.
-
-### What the app actually does
-
-* **Colour matrix** — saturation / brightness / contrast / temperature / hue are
-  composed into one 4×5 matrix and applied through `magnification.dll`
-  (`MagSetFullscreenColorEffect`), the same OS layer the Windows Magnifier colour
-  filter uses. It rides over the whole screen, including games.
-* **GPU gamma** — a second stage writes per-monitor gamma ramps with
-  `SetDeviceGammaRamp`. Originals are saved to `%APPDATA%\ChromaX\ramps.dat`
-  *before* anything changes; a dirty flag makes the next launch restore them even
-  after a crash.
-* **Foreground watch** — 1 s timer reads the front-most process
-  (`QueryFullProcessImageNameW`) and swaps the look per profile.
-* **Crosshair** — click-through layered window (`UpdateLayeredWindow`, 4×
-  supersampled for anti-aliasing), six shapes, live colours.
-* **Modes** — `EnumDisplaySettingsW` / `ChangeDisplaySettingsExW`, including
-  stretched 4:3 presets; Windows shows its own "keep changes?" prompt.
-* **Phone control** — a tiny winsock HTTP server on port 8777 (only while the
-  toggle is on) serving a dark control page to your LAN.
-* **Hotkeys** — `Ctrl+Alt+↑↓` saturation, `0` reset, `X` crosshair, `E` look.
-
-## Running the site
-
-```bash
-python3 -m http.server 8080 --directory site
+#### Windows Command Prompt:
+```cmd
+certutil -hashfile PlexusX.exe SHA256
 ```
 
-Everything is static — no build step, no framework. The before/after slider and the
-game gallery are browser-side previews of the exact maths the app runs.
-
-## Verifying the download
-
+#### Linux / macOS:
 ```bash
-certutil -hashfile ChromaX.exe SHA256     # Windows
-sha256sum ChromaX.exe                     # anywhere else
+sha256sum PlexusX.exe
 ```
 
-The hash is printed on the site's download card and in `site/download/`.
+---
 
-## Why no premium?
+## 🎮 Game Starting Profiles
 
-Because everything works. The feature split other tools hide behind accounts and
-cards is simply not present in this codebase — there is no licence check to bypass
-and no server to call.
+PlexusX includes carefully tuned, conservative starting points for popular competitive titles. All parameters can be customized and saved to local presets:
+
+| Game Title | Executable | Starting Presets |
+| :--- | :--- | :--- |
+| **Rust** | `RustClient.exe` | Competitive, Forest, Night, Snow, Desert, Daylight, Dark Room, Bright, Cinematic, Natural, High Visibility |
+| **Counter-Strike 2** | `cs2.exe` | Competitive, Bright, Natural, Cinematic, Low-Light, Default |
+| **Fortnite** | `FortniteClient-Win64-Shipping.exe` | Competitive, Colorful, Bright, Natural, Cinematic, Default |
+| **Valorant** | `VALORANT-Win64-Shipping.exe` | Competitive, Natural, High Contrast, Default |
+| **Escape From Tarkov** | `EscapeFromTarkov.exe` | Dark Room, Outdoor, Natural, High Visibility, Night |
+| **PUBG: BATTLEGROUNDS** | `TslGame.exe` | Competitive, Sunny, Natural, High Visibility |
+| **Apex Legends** | `r5apex.exe` | Competitive, Vibrant, Natural |
+| **Call of Duty / Warzone**| `cod.exe` / `ModernWarfare.exe` | Competitive, Natural, Gulag Visibility |
+| **Overwatch 2** | `Overwatch.exe` | Competitive, Vibrant, Natural |
+| **Rainbow Six Siege** | `RainbowSix.exe` | Competitive, Dark Angle Boost, Natural |
+| **Minecraft** | `javaw.exe` / `Minecraft.exe` | Vibrant, Cave Explorer, Natural |
+| **Grand Theft Auto V** | `GTA5.exe` | Natural, Cinematic, Sunset Neon |
+| **THE FINALS** | `Discovery.exe` | Vibrant, Competitive |
+| **DayZ** | `DayZ_x64.exe` | Forest, Night, Natural |
+| **Helldivers 2** | `helldivers2.exe` | Bug Planet Fog, Cinematic, Night Visibility |
+| **ARC Raiders** | `ArcRaiders.exe` | Desert Scavenger, Cinematic |
+| **Battlefield 2042** | `BF2042.exe` | Ground War, High Visibility |
+| **Destiny 2** | `destiny2.exe` | Cosmos Vibrant, Raid Visibility |
+| **Custom Games** | Any `.exe` | Add executable manually with custom tags and values |
+
+---
+
+## ⌨ Global Hotkeys
+
+| Hotkey | Action |
+| :--- | :--- |
+| `Ctrl + Alt + ↑` | Increase Saturation (+10%) |
+| `Ctrl + Alt + ↓` | Decrease Saturation (−10%) |
+| `Ctrl + Alt + 0` | Reset all colors to neutral (100%) |
+| `Ctrl + Alt + X` | Toggle Desktop Crosshair Overlay |
+| `Ctrl + Alt + E` | Toggle Color Engine On / Off |
+| `Ctrl + Alt + G` | Toggle Gaming Mode (ultra-low CPU) |
+
+---
+
+## 📱 LAN Phone Remote Control
+
+Control your monitor's display settings from your smartphone or tablet without leaving full-screen gameplay:
+
+1. In PlexusX, navigate to **Settings** and toggle **LAN Phone Remote Server**.
+2. Note the local URL (e.g., `http://192.168.1.100:8777`) and the random 4-digit **Pairing PIN**.
+3. Open the URL in your phone's web browser, enter the PIN, and immediately adjust saturation, vibrance, gamma, brightness, and quick presets.
+4. **Security Note**: The server binds locally to your private LAN (`0.0.0.0`). It is never accessible from the public internet.
+
+---
+
+## 🛠 Building from Source
+
+PlexusX cross-compiles cleanly on Linux, macOS, or Windows using `zig cc` (which bundles the MinGW runtime and headers):
+
+### Prerequisites
+* Python 3.8+
+* `ziglang` Python package:
+  ```bash
+  pip install ziglang
+  ```
+
+### Build Commands
+```bash
+git clone https://github.com/diamantmuqici-dotcom/PlexusX.git
+cd PlexusX/app
+make clean && make
+```
+
+This compiles:
+* `site/download/PlexusX.exe` (Main standalone portable GUI executable)
+* `site/download/PlexusX-Setup.exe` (Standalone Windows installer)
+* `site/download/ChromaX.exe` (Backwards-compatible copy)
+
+### Running Automated Verification Tests
+```bash
+gcc -std=c11 -Wall -O2 -o tests/test_runner tests/test_all.c -lm
+./tests/test_runner
+```
+
+---
+
+## 📄 License & Trademarks
+
+* **License**: Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+* **Disclaimer**: All product names, logos, and brands are property of their respective owners. Rust, Counter-Strike 2, Fortnite, Valorant, Escape from Tarkov, PUBG, Apex Legends, Call of Duty, and other mentioned game titles are registered trademarks of their respective publishers and are mentioned solely for compatibility identification. PlexusX is an independent open-source project.

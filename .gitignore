@@ -1,4 +1,5 @@
 app/build/
+tests/test_runner
 __pycache__/
 *.o
 .DS_Store

@@ -3,13 +3,19 @@ name: build-windows-exe
 on:
   push:
     branches: [main, "arena/**"]
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build:
+  test_and_build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Run Automated Verification Tests
+        run: |
+          gcc -std=c11 -Wall -Werror -O2 -o tests/test_runner tests/test_all.c -lm
+          ./tests/test_runner
 
       - uses: actions/setup-python@v5
         with:
@@ -18,14 +24,29 @@ jobs:
       - name: Install zig toolchain
         run: pip install ziglang
 
-      - name: Build ChromaX.exe
-        run: cd app && make
+      - name: Build PlexusX Windows Executables
+        run: |
+          cd app && make clean && make
+          cd ../site/download
+          sha256sum PlexusX.exe PlexusX-Setup.exe ChromaX.exe > SHA256SUMS.txt
 
-      - name: Print SHA-256
-        run: sha256sum site/download/ChromaX.exe
+      - name: Print SHA-256 Checksums
+        run: cat site/download/SHA256SUMS.txt
 
-      - name: Upload exe
+      - name: Upload PlexusX Portable Executable
         uses: actions/upload-artifact@v4
         with:
-          name: ChromaX
-          path: site/download/ChromaX.exe
+          name: PlexusX-v2.0.0-Portable
+          path: site/download/PlexusX.exe
+
+      - name: Upload PlexusX Setup Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlexusX-v2.0.0-Setup
+          path: site/download/PlexusX-Setup.exe
+
+      - name: Upload SHA-256 Checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: site/download/SHA256SUMS.txt

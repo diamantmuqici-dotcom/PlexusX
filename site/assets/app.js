@@ -1,4 +1,4 @@
-/* ═══════════ ChromaX — app.js ═══════════ */
+/* ═══════════ PlexusX — app.js ═══════════ */
 "use strict";
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -247,5 +247,5 @@ const io = new IntersectionObserver(es => {
 $$(".reveal").forEach(el => io.observe(el));
 
 /* ---------- download ping ---------- */
-$$('a[href="download/ChromaX.exe"]').forEach(a =>
-  a.addEventListener("click", () => toast("ChromaX.exe — verify the SHA-256 after ✓")));
+$$('a[href*=".exe"]').forEach(a =>
+  a.addEventListener("click", () => toast("Download started — verify the SHA-256 after ✓")));
