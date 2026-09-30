@@ -1106,9 +1106,10 @@ static void build_display(void)
         HdrState hs;
         Hdr_ScanFor(m, &hs);
 
-        wchar_t body[160];
+        wchar_t body[220];
         wsprintfW(body,
-                  L"%dx%d @ %d Hz \u00b7 %d bpc \u00b7 ~%d DPI%s%s",
+                  L"%s %s \u00b7 %dx%d @ %d Hz \u00b7 %d bpc \u00b7 ~%d DPI%s%s",
+                  mi->manufacturer, mi->model,
                   mi->res_w, mi->res_h, mi->hz, mi->bpc, mi->dpi,
                   mi->primary ? L" \u00b7 primary" : L"",
                   mi->portrait ? L" \u00b7 portrait" : L"");
@@ -1550,10 +1551,11 @@ static void build_settings(void)
 
     W_HEAD(-1, x, y, cw, 22, L"About", 0, 0);
     y += 26;
-    W_card(-1, x, y, cw, 96, L"ChromaX 2.0.0",
-           L"Free and open. Display control via the OS colour-matrix layer, "
+    W_card(-1, x, y, cw, 96, L"ChromaX 2.0.0 (x64, portable, no installer)",
+           L"Apache-2.0 \u00b7 free and open. Display control via the OS colour-matrix layer, "
            L"per-monitor gamma ramps, and the standard display-settings APIs. "
-           L"No game injection, no memory access, no anti-cheat interaction.", 0);
+           L"No game injection, no memory access, no anti-cheat interaction. "
+           L"Repository and release notes: github.com/diamantmuqici-dotcom/PlexusX", 0);
     y += 110;
     W_GHOST(A_SET_RESET, x, y, 300, 36, L"Reset all app settings", 0, 0);
     y += 50;
