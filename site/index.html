@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChromaX — 300% saturation for every game · free monitor colour for Windows</title>
+<meta name="description" content="ChromaX pushes your screen to 300% saturation, with scenes, per-game looks, crosshair, resolution & refresh and phone control. One portable exe. No account, no card, no premium — ever.">
+<meta property="og:title" content="ChromaX — three times the colour. €0.">
+<meta property="og:description" content="Free monitor colour engine for Windows 10/11. Changes what your monitor shows, never the game.">
+<meta property="og:image" content="media/hero.jpg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c6ff3d'/%3E%3Cpath d='M9 9l14 14M23 9L9 23' stroke='%230c0c10' stroke-width='4.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<!-- ══════════ NAV ══════════ -->
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top" aria-label="ChromaX home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Chroma<b>X</b></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#difference">The difference</a>
+      <a href="#games">Your game</a>
+      <a href="#app">The app</a>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-sm btn-primary" href="#download">Download<span class="btn-sub">v1.0.0 · free</span></a>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ══════════ HERO ══════════ -->
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="hero-in">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="pulse"></span>Windows 10 / 11 · v1.0.0 · <b>free forever</b></p>
+      <h1>Three&nbsp;times<br>the colour.<br><span class="grad">Every game.</span></h1>
+      <p class="lead">ChromaX changes what your <em>monitor</em> shows — never the game.
+        One 260&nbsp;KB portable exe: saturation to 300%, scene presets, per-game looks,
+        crosshair, resolution &amp; refresh, phone control.
+        No account. No card. No premium tier. There is nothing to unlock, because it's all open.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary btn-lg" href="#download">
+          <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
+          Download for Windows</a>
+        <a class="btn btn-ghost btn-lg" href="#difference">See the difference</a>
+      </div>
+      <ul class="chips">
+        <li>260 KB portable exe</li>
+        <li>SHA-256 published</li>
+        <li>Open source · Apache-2.0</li>
+        <li>No admin, no installer</li>
+      </ul>
+    </div>
+
+    <div class="hero-visual">
+      <div class="hero-frame">
+        <div class="hero-img-wrap">
+          <img id="heroImg" src="media/hero.jpg" alt="Survival game landscape before colour enhancement">
+          <div class="hero-tint warm" id="heroWarm" aria-hidden="true"></div>
+          <div class="hero-tint cool" id="heroCool" aria-hidden="true"></div>
+        </div>
+        <div class="hero-hud">
+          <div class="hud-row">
+            <span class="hud-label">LIVE PREVIEW</span>
+            <span class="hud-val mono" id="heroSatVal">230%</span>
+          </div>
+          <input class="range" type="range" min="100" max="300" value="230" id="heroSat" aria-label="Saturation preview">
+          <div class="hud-scale mono"><span>100 · untouched</span><span>300%</span></div>
+        </div>
+        <span class="hud-badge mono">CHROMAX · SDR → BOOSTED</span>
+      </div>
+      <p class="fineprint">Rendered by your browser — the real thing runs on the Windows colour layer.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ MARQUEE ══════════ -->
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-track">
+    <span>300% saturation</span><i>✦</i><span>scene presets</span><i>✦</i><span>per-game auto-switch</span><i>✦</i>
+    <span>crosshair designer</span><i>✦</i><span>resolution &amp; refresh</span><i>✦</i><span>phone control</span><i>✦</i>
+    <span>hotkeys</span><i>✦</i><span>crash restore</span><i>✦</i><span>zero accounts</span><i>✦</i>
+    <span>300% saturation</span><i>✦</i><span>scene presets</span><i>✦</i><span>per-game auto-switch</span><i>✦</i>
+    <span>crosshair designer</span><i>✦</i><span>resolution &amp; refresh</span><i>✦</i><span>phone control</span><i>✦</i>
+    <span>hotkeys</span><i>✦</i><span>crash restore</span><i>✦</i><span>zero accounts</span><i>✦</i>
+  </div>
+</div>
+
+<!-- ══════════ QUICK ANSWERS ══════════ -->
+<section class="section quick">
+  <div class="wrap">
+    <div class="quick-grid">
+      <article class="qcard reveal">
+        <div class="qico qico-safe">?</div>
+        <h3>Is it a virus?</h3>
+        <p>No — and don't take our word for it. We publish the SHA-256 of the exact file
+          on this page. Hash it yourself with <code>certutil</code>, upload it to VirusTotal,
+          read the report. It's a single portable exe: no installer, no drivers, no admin.</p>
+        <a href="#download" class="alink">Check the file ↓</a>
+      </article>
+      <article class="qcard reveal">
+        <div class="qico qico-ban">⌀</div>
+        <h3>Will I get banned?</h3>
+        <p>ChromaX never reads game memory, never edits game files, never injects anything.
+          It changes your display output — the same layer Windows Magnifier uses. What an
+          anti-cheat chooses to do is up to the game's rules, so check those first.</p>
+        <a href="#how" class="alink">How it works →</a>
+      </article>
+      <article class="qcard reveal">
+        <div class="qico qico-euro">€</div>
+        <h3>Is it really free?</h3>
+        <p>All of it. Saturation, scenes, per-game switching, crosshair, modes, phone control —
+          every feature is in the free binary. No account, no trial, no “pro” upsell hiding
+          behind a padlock.</p>
+        <a href="#features" class="alink">See all features →</a>
+      </article>
+      <article class="qcard reveal">
+        <div class="qico qico-x">✕</div>
+        <h3>Anything to cancel?</h3>
+        <p>There's nothing to cancel because there's nothing to pay. The exe runs offline,
+          doesn't phone home, and works with the network cable unplugged. Uninstall = delete
+          the file.</p>
+        <a href="#faq" class="alink">More answers ↓</a>
+      </article>
+    </div>
+    <p class="works-with reveal">Works with any game set to <b>Windowed</b> or <b>Borderless</b> —
+      and reaches exclusive fullscreen too through the Windows colour layer. Scene presets tuned for
+      <b>treelines · night maps · dark rooms · smoke &amp; dust · snow glare · long range · bright sky</b>.</p>
+  </div>
+</section>
+
+<!-- ══════════ DIFFERENCE / COMPARATOR ══════════ -->
+<section class="section" id="difference">
+  <div class="wrap">
+    <p class="eyebrow reveal">SEE THE DIFFERENCE</p>
+    <h2 class="reveal">Drag the line. Then push it to 300%.</h2>
+    <p class="section-lead reveal">Left is your monitor right now. Right is ChromaX.
+      Everything below updates live — this is a browser preview of the exact maths the app runs.</p>
+
+    <div class="compare reveal" id="compare">
+      <img class="compare-img" src="media/scene-rust.jpg" alt="Game scene, original colours">
+      <div class="compare-after" id="compareAfter">
+        <img src="media/scene-rust.jpg" alt="Game scene with ChromaX applied" id="compareAfterImg">
+        <div class="hero-tint warm" id="cmpWarm" aria-hidden="true"></div>
+        <div class="hero-tint cool" id="cmpCool" aria-hidden="true"></div>
+      </div>
+      <div class="compare-handle" id="compareHandle" role="slider" aria-label="Compare original and enhanced"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0">
+        <span class="handle-line"></span>
+        <span class="handle-knob">⇄</span>
+      </div>
+      <span class="compare-tag tag-l mono">ORIGINAL · 100%</span>
+      <span class="compare-tag tag-r mono" id="cmpTag">CHROMAX · 240%</span>
+    </div>
+
+    <div class="ctrl-bar reveal">
+      <div class="ctrl">
+        <label for="cmpSat">Enhancement strength</label>
+        <input class="range" type="range" min="100" max="300" value="240" id="cmpSat">
+        <output class="mono" id="cmpSatVal">240%</output>
+      </div>
+      <div class="ctrl">
+        <label for="cmpCon">Contrast</label>
+        <input class="range" type="range" min="-50" max="50" value="16" id="cmpCon">
+        <output class="mono" id="cmpConVal">+16</output>
+      </div>
+      <div class="ctrl">
+        <label for="cmpTemp">Temperature</label>
+        <input class="range" type="range" min="-50" max="50" value="0" id="cmpTemp">
+        <output class="mono" id="cmpTempVal">0</output>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="cmpReset">Reset</button>
+    </div>
+    <p class="fineprint reveal">Preview only. In the app the same values go through the Windows colour matrix,
+      so every window — game, Discord, desktop — gets the look.</p>
+  </div>
+</section>
+
+<!-- ══════════ GAME GALLERY ══════════ -->
+<section class="section section-alt" id="games">
+  <div class="wrap">
+    <p class="eyebrow reveal">BUILT FOR YOUR GAME</p>
+    <h2 class="reveal">Click a game. Watch it change.</h2>
+    <p class="section-lead reveal">Every popular shooter and survival game ships with a tuned starting point —
+      saturation, contrast, temperature, gamma. Tweak it live, copy the code, paste it in the app.
+      In the app, profiles switch themselves the moment the game opens.</p>
+
+    <div class="gallery reveal">
+      <div class="game-grid" id="gameGrid" role="tablist" aria-label="Game presets">
+        <!-- cards injected by JS -->
+      </div>
+
+      <div class="game-stage">
+        <div class="stage-frame">
+          <img id="stageImg" src="media/scene-rust.jpg" alt="Selected game scene preview">
+          <div class="hero-tint warm" id="stWarm" aria-hidden="true"></div>
+          <div class="hero-tint cool" id="stCool" aria-hidden="true"></div>
+          <div class="stage-hud">
+            <span class="mono" id="stageName">RUST</span>
+            <span class="stage-live">LIVE</span>
+          </div>
+        </div>
+
+        <div class="stage-panel">
+          <div class="stage-stats" id="stageStats"><!-- chips injected --></div>
+          <div class="stage-sliders">
+            <div class="ctrl">
+              <label for="stSat">Saturation</label>
+              <input class="range" type="range" min="100" max="300" value="250" id="stSat">
+              <output class="mono" id="stSatVal">250%</output>
+            </div>
+            <div class="ctrl">
+              <label for="stBri">Brightness</label>
+              <input class="range" type="range" min="-50" max="50" value="6" id="stBri">
+              <output class="mono" id="stBriVal">+6</output>
+            </div>
+            <div class="ctrl">
+              <label for="stCon">Contrast</label>
+              <input class="range" type="range" min="-50" max="50" value="14" id="stCon">
+              <output class="mono" id="stConVal">+14</output>
+            </div>
+            <div class="ctrl">
+              <label for="stTemp">Temperature</label>
+              <input class="range" type="range" min="-50" max="50" value="4" id="stTemp">
+              <output class="mono" id="stTempVal">+4</output>
+            </div>
+            <div class="ctrl">
+              <label for="stGam">Gamma</label>
+              <input class="range" type="range" min="60" max="180" value="100" id="stGam">
+              <output class="mono" id="stGamVal">1.00</output>
+            </div>
+          </div>
+          <div class="stage-actions">
+            <code class="preset-code mono" id="stCode">CHX-RUST-250-06-14-04</code>
+            <button class="btn btn-primary btn-sm" id="stCopy">Copy preset code</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="fineprint reveal">Preset codes are just text — share them, they're free like everything else.
+      Game names belong to their publishers; we only mean “works with”.</p>
+  </div>
+</section>
+
+<!-- ══════════ APP MOCK ══════════ -->
+<section class="section" id="app">
+  <div class="wrap">
+    <p class="eyebrow reveal">THE APP</p>
+    <h2 class="reveal">Dark, quick, and — genuinely — nothing locked.</h2>
+    <p class="section-lead reveal">No padlocks, no “upgrade” popups, no account screen.
+      Every tab below is the real feature set. Try it — it works.</p>
+
+    <div class="mock reveal" id="mock">
+      <div class="mock-titlebar">
+        <span class="mock-logo"><span class="brand-mark sm"></span>CHROMAX</span>
+        <span class="mock-toast mono" id="mockToast">● everything is free — there is no pro version</span>
+        <span class="mock-cap"><i>—</i><i>✕</i></span>
+      </div>
+      <div class="mock-body">
+        <aside class="mock-side" id="mockSide">
+          <button class="mock-side-item active" data-tab="display">Display</button>
+          <button class="mock-side-item" data-tab="games">Game looks</button>
+          <button class="mock-side-item" data-tab="scenes">Scenes</button>
+          <button class="mock-side-item" data-tab="cross">Crosshair</button>
+          <button class="mock-side-item" data-tab="modes">Modes</button>
+          <button class="mock-side-item" data-tab="settings">Settings</button>
+          <div class="mock-free">
+            <b>FREE FOREVER</b>
+            <span>no account · no card</span>
+          </div>
+        </aside>
+
+        <div class="mock-main">
+          <!-- DISPLAY -->
+          <div class="mock-tab active" data-tab="display">
+            <div class="mock-head">
+              <div>
+                <h3>Display</h3>
+                <p>Your whole-screen look. Free — no account, no card.</p>
+              </div>
+              <div class="mock-readout"><b id="mockSatOut">230%</b><span>saturation · free</span></div>
+            </div>
+            <div class="mock-toggle-row"><span>Look enabled</span><button class="sw on" id="mockMaster" aria-pressed="true"><i></i></button></div>
+            <div class="mock-grid">
+              <label class="mock-slider"><span>Saturation</span>
+                <input class="range" type="range" min="100" max="300" value="230" id="mockSat"><output class="mono">230%</output></label>
+              <label class="mock-slider"><span>GPU gamma</span>
+                <input class="range" type="range" min="60" max="240" value="100"><output class="mono">1.00</output></label>
+              <label class="mock-slider"><span>Brightness</span>
+                <input class="range" type="range" min="-100" max="100" value="0"><output class="mono">0%</output></label>
+              <label class="mock-slider"><span>Contrast</span>
+                <input class="range" type="range" min="-100" max="100" value="12"><output class="mono">+12%</output></label>
+              <label class="mock-slider"><span>Temperature</span>
+                <input class="range" type="range" min="-100" max="100" value="0"><output class="mono">0%</output></label>
+              <label class="mock-slider"><span>Hue shift</span>
+                <input class="range" type="range" min="-60" max="60" value="0"><output class="mono">0°</output></label>
+            </div>
+            <div class="mock-btns"><button class="mbtn">Reset all</button><button class="mbtn">Switch look off</button></div>
+            <p class="mock-hint">Ctrl+Alt+↑↓ saturation · Ctrl+Alt+0 reset · Ctrl+Alt+X crosshair · Ctrl+Alt+E look on/off</p>
+          </div>
+
+          <!-- GAMES -->
+          <div class="mock-tab" data-tab="games">
+            <div class="mock-head"><div><h3>Game looks</h3><p>One look per game. Switches itself when the game opens.</p></div></div>
+            <div class="mock-toggle-row"><span>Switch automatically</span><button class="sw on" aria-pressed="true"><i></i></button></div>
+            <p class="mock-div">SAVED LOOKS</p>
+            <div class="mock-row sel"><span class="dot"></span>Desktop · always</div>
+            <div class="mock-row"><span class="dot"></span>Rust · RustClient.exe</div>
+            <div class="mock-row"><span class="dot"></span>CS2 · cs2.exe</div>
+            <div class="mock-row"><span class="dot"></span>Valorant · VALORANT-Win64-Shipping.exe</div>
+            <div class="mock-row"><span class="dot"></span>Tarkov · EscapeFromTarkov.exe</div>
+            <p class="mock-div">RUNNING NOW — CLICK TO ADD</p>
+            <div class="mock-row ghost">FortniteClient-Win64-Shipping.exe</div>
+          </div>
+
+          <!-- SCENES -->
+          <div class="mock-tab" data-tab="scenes">
+            <div class="mock-head"><div><h3>Scenes</h3><p>One-click looks for the situations where colour actually wins.</p></div></div>
+            <div class="scene-chips" id="mockScenes">
+              <button class="chip" data-sat="130">Default</button>
+              <button class="chip" data-sat="255">Treeline</button>
+              <button class="chip" data-sat="235">Night Ops</button>
+              <button class="chip" data-sat="190">Snow Glare</button>
+              <button class="chip" data-sat="275">Smoke &amp; Dust</button>
+              <button class="chip" data-sat="225">Dark Room</button>
+              <button class="chip" data-sat="200">Bright Sky</button>
+              <button class="chip" data-sat="250">Long Range</button>
+            </div>
+            <p class="mock-hint">Click a scene — the Display tab follows it, exactly like the real app.</p>
+          </div>
+
+          <!-- CROSSHAIR -->
+          <div class="mock-tab" data-tab="cross">
+            <div class="mock-head"><div><h3>Crosshair</h3><p>Drawn on top of your screen, not inside the game.</p></div></div>
+            <div class="mock-toggle-row"><span>Crosshair overlay</span><button class="sw on" id="xhToggle" aria-pressed="true"><i></i></button></div>
+            <div class="cross-preview" id="crossPreview">
+              <img src="media/scene-cs2.jpg" alt="">
+              <div class="cross" id="crossGlyph"><i class="ch-h"></i><i class="ch-v"></i><i class="ch-dot"></i></div>
+            </div>
+            <div class="cross-shapes" id="crossShapes">
+              <button class="shape active" data-shape="cross">Cross</button>
+              <button class="shape" data-shape="dot">Dot</button>
+              <button class="shape" data-shape="both">Cross+dot</button>
+              <button class="shape" data-shape="circle">Circle</button>
+              <button class="shape" data-shape="chevron">Chevron</button>
+            </div>
+          </div>
+
+          <!-- MODES -->
+          <div class="mock-tab" data-tab="modes">
+            <div class="mock-head"><div><h3>Resolution &amp; refresh</h3><p>Modes, refresh rate and stretched 4:3 — same tab as your colours.</p></div></div>
+            <div class="mock-mode-now mono">Now: 1920×1080 @ 144 Hz (native)</div>
+            <div class="mock-row">2560×1440 @ 165 Hz · 16:9</div>
+            <div class="mock-row sel"><span class="dot"></span>1440×1080 @ 144 Hz · 4:3 stretched</div>
+            <div class="mock-row">1280×960 @ 144 Hz · 4:3 stretched</div>
+            <div class="mock-row">1920×1080 @ 240 Hz · 16:9</div>
+            <div class="mock-btns"><button class="mbtn primary">Apply mode</button><button class="mbtn">Back to native</button><button class="mbtn">HDR — open Windows settings</button></div>
+            <p class="mock-hint">Windows asks you to keep a new mode — or it reverts, same as Settings.</p>
+          </div>
+
+          <!-- SETTINGS -->
+          <div class="mock-tab" data-tab="settings">
+            <div class="mock-head"><div><h3>Settings</h3><p>Everything is on by default. Nothing is locked.</p></div></div>
+            <div class="mock-toggle-row"><span>Start with Windows</span><button class="sw" aria-pressed="false"><i></i></button></div>
+            <div class="mock-toggle-row"><span>Phone panel on this Wi-Fi</span><button class="sw on" aria-pressed="true"><i></i></button></div>
+            <div class="mock-url mono">http://192.168.1.24:8777 <button class="mbtn tiny" id="copyUrl">Copy link</button></div>
+            <p class="mock-div">ABOUT</p>
+            <p class="mock-about">ChromaX v1.0.0 · Windows 10/11 · single portable exe · no installer, no admin.<br>
+              No account, no telemetry, no phone-home. Settings live in a plain <code>config.ini</code>.<br>
+              What it never does: read game memory · edit game files · inject code · install a driver.</p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ FEATURES ══════════ -->
+<section class="section section-alt" id="features">
+  <div class="wrap">
+    <p class="eyebrow reveal">EVERY FEATURE · FREE</p>
+    <h2 class="reveal">The whole toolbox. None of the paywall.</h2>
+    <p class="section-lead reveal">Other tools split this list into “free” and “premium”.
+      We shipped one binary and went outside.</p>
+
+    <div class="feat-grid">
+      <article class="feat reveal"><span class="fico">◐</span><h3>Saturation to 300%</h3><p>100 means untouched, 300 means three times the colour — on your whole screen, at once.</p></article>
+      <article class="feat reveal"><span class="fico">◑</span><h3>Any-GPU vibrance</h3><p>NVIDIA, AMD or Intel — the saturation engine doesn't care who makes your card, and there's headroom past NVIDIA's own slider.</p></article>
+      <article class="feat reveal"><span class="fico">▦</span><h3>Eight scene presets</h3><p>Treeline, Night Ops, Snow Glare, Smoke &amp; Dust, Dark Room, Bright Sky, Long Range, Default. One click each.</p></article>
+      <article class="feat reveal"><span class="fico">♻</span><h3>Per-game auto-switch</h3><p>Watches which program is in front — the same list Task Manager shows — and swaps your look by itself.</p></article>
+      <article class="feat reveal"><span class="fico">✛</span><h3>Crosshair designer</h3><p>Cross, dot, circle, chevron, T — size, gap, thickness, colours, outline. Drawn above the screen, off until you turn it on.</p></article>
+      <article class="feat reveal"><span class="fico">▣</span><h3>Resolution &amp; refresh</h3><p>Switch modes, refresh rates and stretched 4:3 presets in the same tab as your colours. Windows confirms every change.</p></article>
+      <article class="feat reveal"><span class="fico">☀</span><h3>HDR jump</h3><p>One button opens Windows' own HDR switch — we don't fight the OS on advanced colour, we hand it over.</p></article>
+      <article class="feat reveal"><span class="fico">▯</span><h3>Phone control</h3><p>Same Wi-Fi, browser on your phone, sliders on your monitor. On only while you keep it on — off means port closed.</p></article>
+      <article class="feat reveal"><span class="fico">⌨</span><h3>Hotkeys everywhere</h3><p>Ctrl+Alt+arrows for saturation, 0 to reset, X for crosshair, E for the whole look. Works over any game.</p></article>
+      <article class="feat reveal"><span class="fico">◫</span><h3>Per-monitor gamma</h3><p>GPU gamma ramps on every display your PC drives — the colour filter rides on top of them.</p></article>
+      <article class="feat reveal"><span class="fico">⟲</span><h3>Crash restore</h3><p>Your original gamma is written to disk before anything changes. Kill the app in Task Manager and the screen still comes back.</p></article>
+      <article class="feat reveal"><span class="fico">⌘</span><h3>Portable &amp; quiet</h3><p>One file, no installer, no admin, no telemetry, no account. Config is a readable <code>config.ini</code> you can delete.</p></article>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ HOW IT WORKS ══════════ -->
+<section class="section" id="how">
+  <div class="wrap">
+    <p class="eyebrow reveal">HOW IT WORKS</p>
+    <h2 class="reveal">Three layers. Zero game contact.</h2>
+
+    <div class="how-grid">
+      <article class="how-card reveal">
+        <span class="how-num mono">01</span>
+        <h3>The Windows colour matrix</h3>
+        <p>Saturation, brightness, contrast, temperature and hue compose into one colour matrix —
+          the exact API the Windows Magnifier colour filter uses. Windows lays it over the whole
+          screen, so every pixel under it gets the look: games, video, Discord, your desktop.</p>
+      </article>
+      <article class="how-card reveal">
+        <span class="how-num mono">02</span>
+        <h3>The GPU gamma table</h3>
+        <p>A second stage writes your gamma curve straight into each monitor's lookup table with a
+          normal Windows call. That's why Gamma works even where the colour filter can't reach —
+          and why every saved original is restored on exit.</p>
+      </article>
+      <article class="how-card reveal">
+        <span class="how-num mono">03</span>
+        <h3>The foreground watch</h3>
+        <p>Per-game switching reads the process in front — the same list Task Manager shows — and
+          listens for window changes. It never opens, reads or touches the game itself.</p>
+      </article>
+    </div>
+
+    <div class="never reveal">
+      <h3>What ChromaX never does</h3>
+      <ul>
+        <li>Never reads or writes a game's memory.</li>
+        <li>Never changes a game's files.</li>
+        <li>Never injects code into a game — or any other program.</li>
+        <li>Never installs a driver or a service.</li>
+        <li>Never needs admin rights; it runs as your user.</li>
+        <li>Never phones home. No licence server, no account, no telemetry.</li>
+      </ul>
+    </div>
+
+    <!-- comparison -->
+    <div class="vs reveal">
+      <h3>Against tools that charge for this</h3>
+      <div class="vs-table" role="table">
+        <div class="vs-row vs-head" role="row"><span role="columnheader"></span><span class="vs-us" role="columnheader">ChromaX</span><span role="columnheader">Typical paid tools</span></div>
+        <div class="vs-row" role="row"><span>Price</span><span class="vs-us mono">€0 · once? never</span><span>€5–16 / month, or €16 “lifetime”</span></div>
+        <div class="vs-row" role="row"><span>Features</span><span class="vs-us">everything unlocked</span><span>free tier =1–2 sliders</span></div>
+        <div class="vs-row" role="row"><span>Account</span><span class="vs-us">none, ever</span><span>email + card before you try it</span></div>
+        <div class="vs-row" role="row"><span>Scenes &amp; per-game switching</span><span class="vs-us">included</span><span>“with a plan”</span></div>
+        <div class="vs-row" role="row"><span>Crosshair, phone control</span><span class="vs-us">included</span><span>locked behind padlocks</span></div>
+        <div class="vs-row" role="row"><span>Install</span><span class="vs-us">portable exe · no admin</span><span>installer, startup entries</span></div>
+        <div class="vs-row" role="row"><span>Source code</span><span class="vs-us">open · Apache-2.0</span><span>closed</span></div>
+        <div class="vs-row" role="row"><span>File hash published</span><span class="vs-us">on the download card</span><span>sometimes</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ DOWNLOAD ══════════ -->
+<section class="section section-alt" id="download">
+  <div class="wrap">
+    <div class="dl reveal">
+      <div class="dl-left">
+        <p class="eyebrow">OFFICIAL DOWNLOAD</p>
+        <h2>One file.<br>That's the whole install.</h2>
+        <p class="section-lead">ChromaX comes from this page and nowhere else. Run it from
+          Downloads, a USB stick, wherever — it saves its config to your app data folder and
+          puts your screen back when it closes.</p>
+        <a class="btn btn-primary btn-lg" href="download/ChromaX.exe" download="ChromaX.exe">
+          <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
+          Download ChromaX.exe</a>
+        <p class="dl-meta">Windows 10 / 11 · x64 · 260 KB · v1.0.0 · Apache-2.0</p>
+      </div>
+      <div class="dl-right">
+        <div class="hash-card">
+          <p class="hash-label">SHA-256 — the exact file above</p>
+          <code class="hash mono" id="sha">30edc97247d31e162d4936c0ced4408ec9b6f7a46519c86e1c7f3db43ba2936f</code>
+          <button class="btn btn-ghost btn-sm" id="copySha">Copy hash</button>
+          <p class="hash-note">Verify it yourself before running — open <b>Downloads</b> in Explorer,
+            type <code>cmd</code> in the address bar, Enter, then:</p>
+          <code class="cmd mono">certutil -hashfile ChromaX.exe SHA256</code>
+          <p class="hash-note">The answer must match the hash above, letter for letter. Then scan that
+            hash on VirusTotal and read the report yourself — unsigned files often get a couple of
+            heuristic guesses; that's robots guessing, not a detection you should trust over your own eyes.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ WHAT'S NEW ══════════ -->
+<section class="section" id="changelog">
+  <div class="wrap narrow">
+    <p class="eyebrow reveal">WHAT'S NEW</p>
+    <h2 class="reveal">Dated, in plain words.</h2>
+
+    <div class="log reveal">
+      <div class="log-item">
+        <div class="log-meta"><b>v1.0.0</b><span>30 Sep 2026</span></div>
+        <div class="log-body">
+          <h3>First public build</h3>
+          <ul>
+            <li>Saturation to 300% through the Windows colour matrix, with brightness, contrast, temperature and hue.</li>
+            <li>GPU gamma per monitor, originals written to disk first — restores after a crash, not just a clean exit.</li>
+            <li>Eight scenes, per-game profiles with foreground auto-switch, crosshair designer with six shapes.</li>
+            <li>Resolution &amp; refresh tab with stretched 4:3 presets, phone panel on port 8777, tray icon, hotkeys.</li>
+            <li>Portable single exe. No installer, no admin, no account, no network calls.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ FAQ ══════════ -->
+<section class="section section-alt" id="faq">
+  <div class="wrap narrow">
+    <p class="eyebrow reveal">BEFORE YOU DOWNLOAD</p>
+    <h2 class="reveal">Questions people ask first.</h2>
+
+    <div class="faq reveal">
+      <details open>
+        <summary>Is it a virus? Is it safe to install?</summary>
+        <div><p>There is nothing to install — ChromaX.exe is a single portable file, no installer, no
+          driver, no admin prompt. We publish its SHA-256 on the download card; hash your copy with
+          <code>certutil</code> and compare, then look that hash up on VirusTotal and read the actual
+          report. Windows may say “unknown publisher” because the file isn't code-signed — that costs
+          money and says nothing about behaviour. The source is Apache-2.0 licensed in this repository, so
+          you can read what every line does.</p></div>
+      </details>
+      <details>
+        <summary>Is it a cheat? Will I get banned?</summary>
+        <div><p>It changes your monitor's colour pipeline, after the game has already drawn its frame.
+          It never reads game memory, never writes game files, never injects a DLL. That's the same
+          category as night-light filters, GPU control panels and monitor OSD settings. Whether some
+          anti-cheat tolerates <i>any</i> third-party program is the game publisher's call — check the
+          rules of the game you play. We'd rather tell you that straight than promise something
+          nobody can promise.</p></div>
+      </details>
+      <details>
+        <summary>Does it work with my graphics card?</summary>
+        <div><p>Yes: NVIDIA, AMD and Intel. The saturation, brightness, contrast and temperature run
+          on a Windows colour layer that doesn't care about your GPU vendor. Gamma runs through the
+          standard Windows gamma-ramp call on every display.</p></div>
+      </details>
+      <details>
+        <summary>What's the catch — what's paid?</summary>
+        <div><p>Nothing. There is no paid tier. Scenes, per-game switching, crosshair, phone control,
+          resolution &amp; refresh — it's all in the free binary, because we never wrote the paywall
+          code in the first place. If you'd like to support it, tell someone about it.</p></div>
+      </details>
+      <details>
+        <summary>Which games and display modes work?</summary>
+        <div><p>Any game in Windowed or Borderless windowed mode works through the colour matrix;
+          exclusive fullscreen games are reached too in most titles because Windows composites them.
+          For best results set your game to Borderless. HDR: use the button in the Modes tab to flip
+          Windows' own HDR switch — SDR colour math and HDR don't mix, so we keep them separate.</p></div>
+      </details>
+      <details>
+        <summary>How does phone control work — is it exposed?</summary>
+        <div><p>It's a tiny web server on port 8777 that only starts when you flip the toggle, and
+          stops when you flip it off. It binds to your network interface, so only devices on your own
+          Wi-Fi/LAN can reach it — the internet cannot. Still, treat your LAN like a place you trust,
+          and turn the panel off when you're done.</p></div>
+      </details>
+      <details>
+        <summary>How do I get rid of it?</summary>
+        <div><p>Close the app — your screen restores immediately. Delete ChromaX.exe. If you made a
+          config, delete <code>%APPDATA%\ChromaX</code>. That's every trace. There's no service, no
+          driver, no scheduled task unless you asked for Start with Windows (Settings tab).</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ FINAL CTA ══════════ -->
+<section class="final">
+  <div class="wrap">
+    <h2 class="reveal">Your monitor is capable of <span class="grad">300%</span>.<br>Go let it.</h2>
+    <p class="reveal">Free, portable, open — saturation to 300% with an exe, not an account.</p>
+    <a class="btn btn-primary btn-lg reveal" href="download/ChromaX.exe" download="ChromaX.exe">Download for Windows</a>
+  </div>
+</section>
+
+</main>
+
+<!-- ══════════ FOOTER ══════════ -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Chroma<b>X</b></span></a>
+        <p>The free monitor colour engine for Windows 10 and 11. Changes what your screen shows,
+          never the game.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <a href="#difference">The difference</a>
+        <a href="#games">Game presets</a>
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+      </div>
+      <div>
+        <h4>Trust</h4>
+        <a href="#how">How it works</a>
+        <a href="#faq">FAQ</a>
+        <a href="#download">SHA-256</a>
+        <a href="#changelog">What's new</a>
+      </div>
+      <div>
+        <h4>Contact</h4>
+        <a href="mailto:support@chromax.example">support@chromax.example</a>
+        <a href="#" onclick="return false">Discord (soon)</a>
+        <span class="foot-dim">Built by players, in the open.</span>
+      </div>
+    </div>
+    <p class="foot-legal">© 2026 ChromaX · Apache-2.0 licence · Game and GPU names are trademarks of their
+      owners and are used only to describe compatibility. ChromaX is not affiliated with, endorsed by
+      or sponsored by any game publisher or hardware vendor. Colours shown on this page are browser
+      previews of the app's maths.</p>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
