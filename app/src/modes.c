@@ -83,7 +83,9 @@ int Modes_Apply(int idx)
     dm.dmPelsHeight = g_modes[idx].h;
     dm.dmDisplayFrequency = g_modes[idx].hz;
     dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
-    LONG r = ChangeDisplaySettingsExW(g_dev, &dm, NULL, 0, NULL);
+    /* CDS_UPDATEREGISTRY = user-style change: Windows shows "Keep these
+       display settings?" and reverts automatically if nobody answers. */
+    LONG r = ChangeDisplaySettingsExW(g_dev, &dm, NULL, CDS_UPDATEREGISTRY, NULL);
     if (r != DISP_CHANGE_SUCCESSFUL && r != DISP_CHANGE_BADFLAGS) return -1;
     Modes_Refresh();
     return 0;

@@ -221,6 +221,7 @@ $$(".mock-slider input").forEach(inp => {
   });
 });
 /* scenes drive the mock saturation + toast */
+$("#mockScenes .chip")?.classList.add("active");
 $("#mockScenes").addEventListener("click", e => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
