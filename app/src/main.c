@@ -374,6 +374,191 @@ int Main_CustomMatch(const wchar_t *exe, int *outIdx)
     return 0;
 }
 
+/* ---------------- user-saved crosshair presets ---------------- */
+
+static void xhp_dir(wchar_t *out)
+{
+    wsprintfW(out, L"%s\\xhpresets", g_appdata);
+}
+
+static int xhp_list(wchar_t files[16][MAX_PATH], int *outN)
+{
+    *outN = 0;
+    if (!g_appdata[0]) return 0;
+    wchar_t dir[MAX_PATH];
+    xhp_dir(dir);
+    lstrcatW(dir, L"\\*.json");
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(dir, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (*outN >= 16) break;
+        lstrcpynW(files[*outN], fd.cFileName, MAX_PATH);
+        (*outN)++;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return *outN;
+}
+
+int Main_XhPresetCount(void)
+{
+    wchar_t f[16][MAX_PATH];
+    int n = 0;
+    return xhp_list(f, &n);
+}
+
+const wchar_t *Main_XhPresetName(int i)
+{
+    static wchar_t nm[128];
+    wchar_t f[16][MAX_PATH];
+    int n = 0;
+    xhp_list(f, &n);
+    if (i < 0 || i >= n) return L"";
+    lstrcpynW(nm, f[i], 127);
+    nm[127] = 0;
+    wchar_t *dot = wcsrchr(nm, L'.');
+    if (dot) *dot = 0;
+    return nm;
+}
+
+int Main_XhPresetSave(const wchar_t *name)
+{
+    if (!g_appdata[0]) return -1;
+    wchar_t nm[128];
+    if (name && name[0]) {
+        lstrcpynW(nm, name, 127);
+    } else {
+        int n = 0;
+        wchar_t f[16][MAX_PATH];
+        xhp_list(f, &n);
+        wsprintfW(nm, L"My crosshair %d", n + 1);
+    }
+    nm[127] = 0;
+    for (wchar_t *p = nm; *p; p++)
+        if (*p == L'\\' || *p == L'/' || *p == L':' || *p == L'*' ||
+            *p == L'?' || *p == L'"' || *p == L'<' || *p == L'>' || *p == L'|')
+            *p = L'_';
+    if (!nm[0]) return -1;
+    wchar_t dir[MAX_PATH], full[MAX_PATH];
+    xhp_dir(dir);
+    wsprintfW(full, L"%s\\%s.json", dir, nm);
+    CreateDirectoryW(dir, NULL);
+
+    CxJson *j = CxJson_NewObj();
+    CxJson_ObjSet(j, "app", CxJson_NewStr("ChromaX"));
+    CxJson_ObjSet(j, "kind", CxJson_NewStr("crosshair"));
+    char *nmA = Main_Utf16ToUtf8Alloc(nm);
+    CxJson_ObjSet(j, "name", CxJson_NewStr(nmA ? nmA : "crosshair"));
+    free((void *)nmA);
+    CxJson_ObjSet(j, "shape",    CxJson_NewNum(g_xh.shape));
+    CxJson_ObjSet(j, "size",     CxJson_NewNum(g_xh.size));
+    CxJson_ObjSet(j, "gap",      CxJson_NewNum(g_xh.gap));
+    CxJson_ObjSet(j, "thick",    CxJson_NewNum(g_xh.thick));
+    CxJson_ObjSet(j, "opacity",  CxJson_NewNum(g_xh.opacity));
+    CxJson_ObjSet(j, "outline",  CxJson_NewBool(g_xh.outline));
+    CxJson_ObjSet(j, "dot",      CxJson_NewBool(g_xh.dot));
+    CxJson_ObjSet(j, "rotation", CxJson_NewNum(g_xh.rotation));
+    CxJson_ObjSet(j, "monitor",  CxJson_NewNum(g_xh.monitor));
+    CxJson_ObjSet(j, "color", CxJson_NewNum(
+        (GetRValue(g_xh.color) << 16) | (GetGValue(g_xh.color) << 8) |
+        GetBValue(g_xh.color)));
+    CxJson_ObjSet(j, "ocolor", CxJson_NewNum(
+        (GetRValue(g_xh.ocolor) << 16) | (GetGValue(g_xh.ocolor) << 8) |
+        GetBValue(g_xh.ocolor)));
+    char *str = CxJson_WriteStr(j);
+    CxJson_Free(j);
+    if (!str) return -1;
+    int ok = 0;
+    FILE *f = _wfopen(full, L"w");
+    if (f) {
+        ok = (int)fwrite(str, 1, strlen(str), f) == (int)strlen(str);
+        fclose(f);
+    }
+    free(str);
+    if (ok) Main_Log(L"INFO", L"crosshair preset saved");
+    return ok ? 0 : -1;
+}
+
+int Main_XhPresetLoad(int i, XhCfg *out)
+{
+    wchar_t f[16][MAX_PATH];
+    int n = 0;
+    xhp_list(f, &n);
+    if (i < 0 || i >= n) return -1;
+    wchar_t dir[MAX_PATH], full[MAX_PATH];
+    xhp_dir(dir);
+    wsprintfW(full, L"%s\\%s", dir, f[i]);
+    FILE *fh = _wfopen(full, L"rb");
+    if (!fh) return -1;
+    fseek(fh, 0, SEEK_END);
+    long sz = ftell(fh);
+    fseek(fh, 0, SEEK_SET);
+    if (sz <= 0 || sz > (1 << 20)) { fclose(fh); return -1; }
+    char *txt = (char *)malloc((size_t)sz + 1);
+    if (!txt) { fclose(fh); return -1; }
+    if (fread(txt, 1, (size_t)sz, fh) != (size_t)sz) {
+        free(txt);
+        fclose(fh);
+        return -1;
+    }
+    fclose(fh);
+    txt[sz] = 0;
+    CxJson *j = NULL;
+    char err[128] = { 0 };
+    if (CxJson_Parse(txt, (size_t)sz, &j, err, sizeof err) != 0 || !j) {
+        free(txt);
+        return -1;
+    }
+    free(txt);
+    if (lstrcmpiA(CxJson_GetStr(j, "kind", ""), "crosshair") != 0) {
+        CxJson_Free(j);
+        return -1;
+    }
+    *out = g_xh;   /* start from current, overwrite what the file says */
+    out->shape    = (int)CxJson_GetNum(j, "shape", out->shape);
+    out->size     = (int)CxJson_GetNum(j, "size", out->size);
+    out->gap      = (int)CxJson_GetNum(j, "gap", out->gap);
+    out->thick    = (int)CxJson_GetNum(j, "thick", out->thick);
+    out->opacity  = (int)CxJson_GetNum(j, "opacity", out->opacity);
+    out->outline  = CxJson_GetBool(j, "outline", out->outline);
+    out->dot      = CxJson_GetBool(j, "dot", out->dot);
+    out->rotation = (int)CxJson_GetNum(j, "rotation", out->rotation);
+    out->monitor  = (int)CxJson_GetNum(j, "monitor", out->monitor);
+    out->color    = RGB((int)CxJson_GetNum(j, "color", 0xFFFFFF) >> 16 & 0xFF,
+                        (int)CxJson_GetNum(j, "color", 0xFFFFFF) >> 8 & 0xFF,
+                        (int)CxJson_GetNum(j, "color", 0xFFFFFF) & 0xFF);
+    out->ocolor   = RGB((int)CxJson_GetNum(j, "ocolor", 0) >> 16 & 0xFF,
+                        (int)CxJson_GetNum(j, "ocolor", 0) >> 8 & 0xFF,
+                        (int)CxJson_GetNum(j, "ocolor", 0) & 0xFF);
+    CxJson_Free(j);
+    /* clamp to the UI ranges */
+    if (out->shape < 0 || out->shape >= CXXH_NSHAPES) out->shape = 0;
+    if (out->size < 6) out->size = 6;
+    if (out->size > 64) out->size = 64;
+    if (out->gap < 0) out->gap = 0;
+    if (out->gap > 24) out->gap = 24;
+    if (out->thick < 1) out->thick = 1;
+    if (out->thick > 10) out->thick = 10;
+    if (out->opacity < 5) out->opacity = 5;
+    if (out->opacity > 100) out->opacity = 100;
+    if (out->rotation < 0) out->rotation = 0;
+    if (out->rotation > 359) out->rotation = 359;
+    return 0;
+}
+
+void Main_XhPresetRemove(int i)
+{
+    wchar_t f[16][MAX_PATH];
+    int n = 0;
+    xhp_list(f, &n);
+    if (i < 0 || i >= n) return;
+    wchar_t dir[MAX_PATH], full[MAX_PATH];
+    xhp_dir(dir);
+    wsprintfW(full, L"%s\\%s", dir, f[i]);
+    DeleteFileW(full);
+}
+
 /* ---------------- tray context menu ---------------- */
 
 void Main_TrayMenu(void)

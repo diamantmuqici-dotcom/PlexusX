@@ -250,6 +250,13 @@ int          Main_CustomAdd(const char *name, const char *exe,
 void         Main_CustomRemove(int i);
 int          Main_CustomMatch(const wchar_t *exe, int *outIdx); /* 1 = match */
 
+/* user-saved crosshair presets (main.c) */
+int          Main_XhPresetCount(void);
+const wchar_t *Main_XhPresetName(int i);
+int          Main_XhPresetSave(const wchar_t *name);  /* 0 = ok */
+int          Main_XhPresetLoad(int i, XhCfg *out);    /* 0 = ok */
+void         Main_XhPresetRemove(int i);
+
 /* tray context menu (main.c) */
 void         Main_TrayMenu(void);
 

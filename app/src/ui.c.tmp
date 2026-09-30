@@ -444,10 +444,6 @@ void UI_Refresh(void) { refresh(); }
 
 /* ---------------- widget draw ---------------- */
 
-static float g_splitPos = 0.5f;
-static int   g_prevMode = 0;    /* 0 = after only, 1 = split view */
-static int   g_dragSplit = 0;   /* divider drag in progress */
-
 static void draw_widget(HDC dc, Widget *p)
 {
     if (p->r.bottom - g_scroll <= 0 || p->r.top - g_scroll > 830) return;
@@ -686,7 +682,9 @@ static int g_selMode[8];
 static int g_colorMon = -1;      /* -1 = all monitors */
 static int g_curScene = CX_SCENE_FOREST;
 static int g_presetSel = -1;
-
+static float g_splitPos = 0.5f;
+static int   g_prevMode = 0;    /* 0 = after only, 1 = split view */
+static int   g_dragSplit = 0;   /* divider drag in progress */
 static char  g_searchBuf[160];   /* utf-8 */
 static float g_sdrWhite = 100.f;
 
@@ -1295,6 +1293,7 @@ static void build_color(void)
         }
         y += 2 * 40 + 8;
     }
+    (void)g_splitPos;
 
     W_TEXT(x, y, cw, 40,
            L"Note: sharpness & per-pixel vibrance are shown in the preview; the live-display stages "
@@ -2943,11 +2942,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
 /* focus buffer helpers */
 static char *g_focusBuf(void)
 {
-    /* prefer the focused search field; fall back to the page's A_SEARCH */
-    if (g_focusId >= 0)
-        for (int i = 0; i < g_nw; i++)
-            if (g_w[i].type == W_SEARCH && g_w[i].id == g_focusId)
-                return g_w[i].buf;
+    /* the A_SEARCH widget on the current page */
     for (int i = 0; i < g_nw; i++)
         if (g_w[i].type == W_SEARCH && g_w[i].id == A_SEARCH)
             return g_w[i].buf;
