@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install zig toolchain (pinned: must match the published build)
+      - name: "Install zig toolchain (pinned, must match the published build)"
         run: pip install ziglang==0.16.0
 
       - name: Build exe + publish to site/download
