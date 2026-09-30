@@ -220,6 +220,22 @@ int Modes_ApplyNative(void)
     return -1;
 }
 
+int Modes_ApplyRes(int target_w, int target_h)
+{
+    int best_idx = -1;
+    int max_hz = 0;
+    for (int i = 0; i < g_nmodes; i++) {
+        if (g_modes[i].w == target_w && g_modes[i].h == target_h) {
+            if (g_modes[i].hz > max_hz) {
+                max_hz = g_modes[i].hz;
+                best_idx = i;
+            }
+        }
+    }
+    if (best_idx >= 0) return Modes_Apply(best_idx);
+    return -1;
+}
+
 void Modes_OpenHdrSettings(void)
 {
     ShellExecuteW(NULL, L"open", L"ms-settings:display", NULL, NULL, SW_SHOWNORMAL);

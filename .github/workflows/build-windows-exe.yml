@@ -28,7 +28,7 @@ jobs:
         run: |
           cd app && make clean && make
           cd ../site/download
-          sha256sum PlexusX.exe PlexusX-Setup.exe ChromaX.exe > SHA256SUMS.txt
+          sha256sum PlexusX.exe PlexusX-Setup.exe > SHA256SUMS.txt
 
       - name: Print SHA-256 Checksums
         run: cat site/download/SHA256SUMS.txt
