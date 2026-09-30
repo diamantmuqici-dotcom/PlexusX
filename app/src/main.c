@@ -2,7 +2,9 @@
  * Main Entry Point: Window Lifecycle, Tray Icon, Hotkeys, Timers & Persistence.
  */
 #include "common.h"
+#include "color_math.h"
 #include <shlobj.h>
+#include <signal.h>
 
 HWND      g_hwnd = NULL;
 HINSTANCE g_inst = NULL;
@@ -24,9 +26,243 @@ static int     g_reapply_tick = 0;
 #define TRAY_GAME_MODE 104
 #define TRAY_RESET     105
 #define TRAY_EXIT      106
+#define TRAY_EMERGENCY 107
 
 const wchar_t *Main_GetExePath(void) { return g_exepath; }
 const wchar_t *Main_GetAppDataPath(void) { return g_appdata; }
+
+/* ---------------- Crash Diagnostics & Display Safety Net ---------------- */
+/* An unhandled exception must never leave the user staring at a stuck colour matrix or a
+ * modified gamma ramp.  The filter writes a report to %LocalAppData%\PlexusX\crash.log and then
+ * calls Eng_Reset() (identity colour matrix + the original ramps).  It is deliberately
+ * primitive: fixed buffers, raw Win32 file I/O and hand-rolled hex formatting, so it does not
+ * depend on the CRT, the heap or any state that the crash may have damaged. */
+static wchar_t      g_crashlog[MAX_PATH];
+static char         g_crash_hdr[MAX_PATH * 3 + 64];   /* "version / build / exe", prepared at start-up */
+static volatile LONG g_crash_stage = 0;
+
+static char *cr_put(char *p, char *end, const char *s)
+{
+    while (*s && p < end - 1) *p++ = *s++;
+    return p;
+}
+
+static char *cr_hex(char *p, char *end, unsigned long long v, int digits)
+{
+    static const char hexd[] = "0123456789ABCDEF";
+    if (p + digits + 2 >= end) return p;
+    *p++ = '0';
+    *p++ = 'x';
+    for (int i = digits - 1; i >= 0; i--) *p++ = hexd[(v >> (i * 4)) & 0xF];
+    return p;
+}
+
+static char *cr_dec(char *p, char *end, unsigned long v, int min_digits)
+{
+    char tmp[16];
+    int n = 0;
+    do { tmp[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 15);
+    while (n < min_digits && n < 15) tmp[n++] = '0';
+    while (n && p < end - 1) *p++ = tmp[--n];
+    return p;
+}
+
+/* "0x00007FF6A1B21234 [PlexusX.exe+0x00011234]" */
+static char *cr_addr(char *p, char *end, unsigned long long addr)
+{
+    p = cr_hex(p, end, addr, 16);
+    HMODULE mod = NULL;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCWSTR)(ULONG_PTR)addr, &mod) && mod) {
+        char name[MAX_PATH];
+        DWORD n = GetModuleFileNameA(mod, name, MAX_PATH);
+        if (n && n < MAX_PATH) {
+            const char *base = name;
+            for (DWORD i = 0; i < n; i++) if (name[i] == '\\') base = name + i + 1;
+            p = cr_put(p, end, " [");
+            p = cr_put(p, end, base);
+            p = cr_put(p, end, "+");
+            p = cr_hex(p, end, addr - (unsigned long long)(ULONG_PTR)mod, 8);
+            p = cr_put(p, end, "]");
+        }
+    }
+    return p;
+}
+
+static const char *cr_exception_name(DWORD code)
+{
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:      return "EXCEPTION_ACCESS_VIOLATION";
+    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: return "EXCEPTION_ARRAY_BOUNDS_EXCEEDED";
+    case EXCEPTION_BREAKPOINT:            return "EXCEPTION_BREAKPOINT";
+    case EXCEPTION_DATATYPE_MISALIGNMENT: return "EXCEPTION_DATATYPE_MISALIGNMENT";
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:    return "EXCEPTION_FLT_DIVIDE_BY_ZERO";
+    case EXCEPTION_FLT_INVALID_OPERATION: return "EXCEPTION_FLT_INVALID_OPERATION";
+    case EXCEPTION_ILLEGAL_INSTRUCTION:   return "EXCEPTION_ILLEGAL_INSTRUCTION";
+    case EXCEPTION_IN_PAGE_ERROR:         return "EXCEPTION_IN_PAGE_ERROR";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:    return "EXCEPTION_INT_DIVIDE_BY_ZERO";
+    case EXCEPTION_PRIV_INSTRUCTION:      return "EXCEPTION_PRIV_INSTRUCTION";
+    case EXCEPTION_STACK_OVERFLOW:        return "EXCEPTION_STACK_OVERFLOW";
+    default:                              return "unknown exception";
+    }
+}
+
+static void cr_append(const char *buf, size_t len)
+{
+    if (!g_crashlog[0] || !len) return;
+    HANDLE h = CreateFileW(g_crashlog, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD wr = 0;
+    WriteFile(h, buf, (DWORD)len, &wr, NULL);
+    CloseHandle(h);
+}
+
+/* Part 1: what happened.  Kept short and simple so it is written before anything risky runs. */
+static void cr_write_summary(EXCEPTION_POINTERS *ep)
+{
+    static char buf[2048];
+    char *p = buf, *end = buf + sizeof buf;
+    const EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    p = cr_put(p, end, "\r\n==================== PlexusX crash report ====================\r\n");
+    p = cr_put(p, end, "Time       : ");
+    p = cr_dec(p, end, st.wYear, 4);   p = cr_put(p, end, "-");
+    p = cr_dec(p, end, st.wMonth, 2);  p = cr_put(p, end, "-");
+    p = cr_dec(p, end, st.wDay, 2);    p = cr_put(p, end, " ");
+    p = cr_dec(p, end, st.wHour, 2);   p = cr_put(p, end, ":");
+    p = cr_dec(p, end, st.wMinute, 2); p = cr_put(p, end, ":");
+    p = cr_dec(p, end, st.wSecond, 2); p = cr_put(p, end, " (local)\r\n");
+    p = cr_put(p, end, g_crash_hdr);
+    p = cr_put(p, end, "Exception  : ");
+    p = cr_hex(p, end, er->ExceptionCode, 8);
+    p = cr_put(p, end, " ");
+    p = cr_put(p, end, cr_exception_name(er->ExceptionCode));
+    p = cr_put(p, end, "\r\nAddress    : ");
+    p = cr_addr(p, end, (unsigned long long)(ULONG_PTR)er->ExceptionAddress);
+    if ((er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION || er->ExceptionCode == EXCEPTION_IN_PAGE_ERROR) &&
+        er->NumberParameters >= 2) {
+        p = cr_put(p, end, "\r\nAccess     : ");
+        p = cr_put(p, end, er->ExceptionInformation[0] == 0 ? "read of " :
+                           er->ExceptionInformation[0] == 1 ? "write to " : "execute of ");
+        p = cr_hex(p, end, (unsigned long long)er->ExceptionInformation[1], 16);
+    }
+    p = cr_put(p, end, "\r\nThread     : ");
+    p = cr_hex(p, end, GetCurrentThreadId(), 8);
+    p = cr_put(p, end, "\r\n");
+    cr_append(buf, (size_t)(p - buf));
+}
+
+/* Part 2: registers and a stack walk (x64 unwind tables).  Runs after the display has been restored. */
+static void cr_write_trace(EXCEPTION_POINTERS *ep)
+{
+    static char buf[4096];
+    char *p = buf, *end = buf + sizeof buf;
+
+#if defined(__x86_64__)
+    const CONTEXT *c = ep->ContextRecord;
+    if (c) {
+        p = cr_put(p, end, "Registers  : RIP="); p = cr_hex(p, end, c->Rip, 16);
+        p = cr_put(p, end, " RSP="); p = cr_hex(p, end, c->Rsp, 16);
+        p = cr_put(p, end, " RBP="); p = cr_hex(p, end, c->Rbp, 16);
+        p = cr_put(p, end, "\r\n             RAX="); p = cr_hex(p, end, c->Rax, 16);
+        p = cr_put(p, end, " RBX="); p = cr_hex(p, end, c->Rbx, 16);
+        p = cr_put(p, end, " RCX="); p = cr_hex(p, end, c->Rcx, 16);
+        p = cr_put(p, end, " RDX="); p = cr_hex(p, end, c->Rdx, 16);
+        p = cr_put(p, end, "\r\nStack      :\r\n");
+
+        CONTEXT ctx = *c;
+        for (int i = 0; i < 32 && ctx.Rip; i++) {
+            p = cr_put(p, end, "  #"); p = cr_dec(p, end, (unsigned long)i, 2); p = cr_put(p, end, " ");
+            p = cr_addr(p, end, ctx.Rip);
+            p = cr_put(p, end, "\r\n");
+
+            DWORD64 image_base = 0;
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(ctx.Rip, &image_base, NULL);
+            if (fe) {
+                PVOID handler_data = NULL;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, ctx.Rip, fe, &ctx, &handler_data, &frame, NULL);
+            } else {
+                /* leaf function: the return address is at [rsp]; read it without risking a nested fault */
+                DWORD64 ret = 0;
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(GetCurrentProcess(), (LPCVOID)(ULONG_PTR)ctx.Rsp, &ret, sizeof ret, &got) ||
+                    got != sizeof ret) break;
+                ctx.Rip = ret;
+                ctx.Rsp += 8;
+            }
+        }
+    }
+#else
+    (void)ep;
+#endif
+    p = cr_put(p, end, "Display    : Eng_Reset() ran - colour matrix back to identity, gamma ramps restored\r\n");
+    cr_append(buf, (size_t)(p - buf));
+}
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
+{
+    /* stage 1 = the original fault, stage 2 = a fault inside this handler, 3+ = give up */
+    LONG stage = InterlockedIncrement(&g_crash_stage);
+    if (stage == 1 && ep && ep->ExceptionRecord) {
+        cr_write_summary(ep);     /* 1. record what happened (tiny, safe) */
+        Eng_Reset();              /* 2. hand the desktop back: identity matrix + original ramps */
+        cr_write_trace(ep);       /* 3. registers + stack walk (the risky part goes last) */
+    } else if (stage == 2) {
+        Eng_Reset();              /* the handler itself faulted: one more attempt to restore the display */
+    }
+    return EXCEPTION_EXECUTE_HANDLER;   /* terminate quietly: no "has stopped working" dialog */
+}
+
+/* abort() / assert failures never reach SEH: restore the display for them too */
+static void crash_abort_handler(int sig)
+{
+    (void)sig;
+    Eng_Reset();
+    TerminateProcess(GetCurrentProcess(), 3);
+}
+
+static void crash_install(void)
+{
+    wchar_t dir[MAX_PATH];
+    dir[0] = 0;
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, dir) != S_OK) {
+        DWORD n = GetTempPathW(MAX_PATH, dir);
+        if (!n || n >= MAX_PATH) dir[0] = 0;
+        else if (dir[n - 1] == L'\\') dir[n - 1] = 0;
+    }
+    if (dir[0] && lstrlenW(dir) < MAX_PATH - 24) {
+        lstrcatW(dir, L"\\PlexusX");
+        CreateDirectoryW(dir, NULL);
+        wsprintfW(g_crashlog, L"%s\\crash.log", dir);
+
+        /* keep the log small: start over once it grows past 256 KB */
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        if (GetFileAttributesExW(g_crashlog, GetFileExInfoStandard, &fa) &&
+            (fa.nFileSizeHigh || fa.nFileSizeLow > 256 * 1024)) DeleteFileW(g_crashlog);
+    }
+
+    /* "Version / Build / Executable" lines, prepared now so the filter never has to convert strings */
+    char ver[64], build[64], exe[MAX_PATH * 2];
+    wchar_t exew[MAX_PATH];
+    GetModuleFileNameW(NULL, exew, MAX_PATH);
+    WideCharToMultiByte(CP_UTF8, 0, PX_VERSION, -1, ver, sizeof ver, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, PX_BUILD_DATE, -1, build, sizeof build, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, exew, -1, exe, sizeof exe, NULL, NULL);
+    char *p = g_crash_hdr, *end = g_crash_hdr + sizeof g_crash_hdr;
+    p = cr_put(p, end, "Version    : "); p = cr_put(p, end, ver);
+    p = cr_put(p, end, " (build ");      p = cr_put(p, end, build);
+    p = cr_put(p, end, ")\r\nExecutable : "); p = cr_put(p, end, exe);
+    p = cr_put(p, end, "\r\n");
+    *p = 0;
+
+    SetUnhandledExceptionFilter(crash_filter);
+    signal(SIGABRT, crash_abort_handler);
+}
 
 /* ---------------- High Quality Geometric Icon ---------------- */
 static HICON build_app_icon(int sz)
@@ -88,6 +324,9 @@ static void save_current_config(void)
     wsprintfW(b, L"%d", (int)(l->gamma * 100)); WritePrivateProfileStringW(L"current", L"gamma", b, f);
     wsprintfW(b, L"%d", (int)l->temp);        WritePrivateProfileStringW(L"current", L"temp", b, f);
     wsprintfW(b, L"%d", (int)l->tint);        WritePrivateProfileStringW(L"current", L"tint", b, f);
+    wsprintfW(b, L"%d", (int)l->r_gain);      WritePrivateProfileStringW(L"current", L"r_gain", b, f);
+    wsprintfW(b, L"%d", (int)l->g_gain);      WritePrivateProfileStringW(L"current", L"g_gain", b, f);
+    wsprintfW(b, L"%d", (int)l->b_gain);      WritePrivateProfileStringW(L"current", L"b_gain", b, f);
     wsprintfW(b, L"%d", (int)l->shadows);     WritePrivateProfileStringW(L"current", L"shadows", b, f);
     wsprintfW(b, L"%d", (int)l->highlights);  WritePrivateProfileStringW(L"current", L"highlights", b, f);
     wsprintfW(b, L"%d", (int)l->black_level); WritePrivateProfileStringW(L"current", L"black_level", b, f);
@@ -129,6 +368,7 @@ static void load_current_config(void)
     l.white_point = (float)GetPrivateProfileIntW(L"current", L"white_point", 100, f);
     l.clarity = (float)GetPrivateProfileIntW(L"current", L"clarity", 100, f);
     l.hue = 0.0f;
+    cm_sanitize_look(&l);      /* a hand-edited or corrupt config can never feed NaN / absurd values to the engine */
     Ui_LoadLook(&l);
 
     XhCfg x;
@@ -162,6 +402,24 @@ void Main_ApplyAll(void)
     Xh_Update(&x);
 
     Phone_SetLook(l);
+}
+
+/* Ctrl+Alt+Shift+R / tray / Tools panel: the "get my screen back" button.
+ * Closes every test pattern, bypasses the colour engine and restores the desktop
+ * (identity colour matrix + original gamma ramps) unconditionally via Eng_Reset(). */
+void Main_EmergencyReset(void)
+{
+    Tools_ClosePattern();
+
+    Look *l = Ui_Look();
+    *l = (Look)LOOK_NEUTRAL_INIT;
+    l->enabled = 0;            /* stays bypassed until the user switches the engine back on */
+
+    Eng_Reset();
+    Ui_Notify(L"EMERGENCY RESET: patterns closed, color engine bypassed, display restored");
+    Ui_RebuildPanel();
+    Main_ApplyAll();           /* engine is bypassed: keeps crosshair / phone state in sync */
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
 }
 
 /* ---------------- System Tray ---------------- */
@@ -205,6 +463,7 @@ static void tray_menu(void)
     AppendMenuW(m, MF_STRING, TRAY_XH, x.on ? L"Hide Crosshair Overlay" : L"Show Crosshair Overlay");
     AppendMenuW(m, MF_STRING, TRAY_GAME_MODE, Tools_IsGamingMode() ? L"Gaming Mode: ON" : L"Gaming Mode: OFF");
     AppendMenuW(m, MF_STRING, TRAY_RESET, L"Reset All Display Colors");
+    AppendMenuW(m, MF_STRING, TRAY_EMERGENCY, L"Emergency Safe Reset  (Ctrl+Alt+Shift+R)");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, TRAY_EXIT, L"Exit");
 
@@ -226,11 +485,11 @@ static void handle_hotkey(WPARAM id)
         l->sat = clampf(l->sat - 10.0f, 0, 300);
         Ui_Notify(L"Saturation −10%");
         break;
-    case 3: /* Reset 100% */
-        l->sat = 100.0f; l->vibrance = 100.0f; l->bri = 100.0f; l->con = 100.0f;
-        l->gamma = 1.0f; l->temp = 6500.0f; l->tint = 0.0f;
+    case 3: /* Reset ALL channels (R/G/B gain, black/white) and tone curves (gamma, shadows, highlights, clarity) */
+        *l = (Look)LOOK_NEUTRAL_INIT;
         l->enabled = 1;
-        Ui_Notify(L"Display Colors Reset to Neutral");
+        Eng_Reset();
+        Ui_Notify(L"All Channels & Tone Curves Reset to Neutral");
         break;
     case 4: /* Toggle Crosshair */
         Xh_Toggle();
@@ -243,6 +502,9 @@ static void handle_hotkey(WPARAM id)
     case 6: /* Toggle Gaming Mode */
         Tools_ToggleGamingMode();
         break;
+    case 7: /* Ctrl+Alt+Shift+R: emergency safe reset */
+        Main_EmergencyReset();
+        return;
     }
     Ui_RebuildPanel();
     Main_ApplyAll();
@@ -253,6 +515,20 @@ static void handle_hotkey(WPARAM id)
 static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
+    case WM_CREATE:
+        /* CreateWindowExW has not returned yet: publish the handle now.  Ui_Init() and the display
+         * modes were initialised BEFORE this point, so nothing below can see half-built state. */
+        g_hwnd = wnd;
+        Ui_AttachWindow(wnd);
+        return 0;
+    case WM_SIZE:
+        if (Ui_IsReady()) InvalidateRect(wnd, NULL, FALSE);
+        return 0;
+    case WM_DISPLAYCHANGE:
+        /* A mode change resets the display pipeline on many drivers: re-assert the look */
+        Eng_Resync();
+        Main_ApplyAll();
+        return 0;
     case WM_NCHITTEST: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ScreenToClient(wnd, &pt);
@@ -315,6 +591,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             Prof_Poll();
             if (++g_reapply_tick >= 60) {
                 g_reapply_tick = 0;
+                Eng_Resync();          /* the driver / a game may have reset the LUT behind our back */
                 Main_ApplyAll();
             }
             InvalidateRect(wnd, NULL, FALSE);
@@ -363,6 +640,9 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         case TRAY_RESET:
             Ui_Exec(ID_B_RESET_COLOR);
             break;
+        case TRAY_EMERGENCY:
+            Main_EmergencyReset();
+            break;
         case TRAY_EXIT:
             PostMessageW(wnd, WM_CLOSE, 0, 0);
             break;
@@ -391,6 +671,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
 {
     (void)prev; (void)cmd;
+
+    /* Safety net first: from here on any crash restores the desktop and leaves a report in
+     * %LocalAppData%\PlexusX\crash.log */
+    crash_install();
 
     /* Single Instance Mutex */
     HANDLE mutex = CreateMutexW(NULL, TRUE, PX_MUTEX);
@@ -460,12 +744,23 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     if (sx < 0) sx = CW_USEDEFAULT;
     if (sy < 0) sy = CW_USEDEFAULT;
 
-    g_hwnd = CreateWindowExW(0, PX_CLASS, PX_APP_TITLE, WS_POPUP,
-                             sx, sy, ww, wh, NULL, NULL, inst, NULL);
-    if (!g_hwnd) return 1;
-
-    Ui_Init(g_hwnd, inst);
+    /* Everything the first window messages (WM_CREATE, WM_SIZE, WM_PAINT, hit-testing) can touch
+     * must exist BEFORE CreateWindowExW: display-mode / monitor enumeration, then the UI
+     * (DPI scale, fonts, profiles, test-pattern class, widgets) and the saved look. */
+    Modes_Refresh();
+    Ui_Init(NULL, inst);
     load_current_config();
+    Ui_RebuildPanel();          /* show the loaded look, not the built-in defaults */
+
+    HWND created = CreateWindowExW(0, PX_CLASS, PX_APP_TITLE, WS_POPUP,
+                                   sx, sy, ww, wh, NULL, NULL, inst, NULL);
+    if (!created) {
+        Eng_Shutdown();
+        Ui_Free();
+        return 1;
+    }
+    g_hwnd = created;           /* (already set by WM_CREATE; kept for clarity) */
+    Ui_AttachWindow(g_hwnd);
     Xh_Init();
 
     ShowWindow(g_hwnd, show);
@@ -481,6 +776,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     RegisterHotKey(g_hwnd, 4, MOD_CONTROL | MOD_ALT, 'X');
     RegisterHotKey(g_hwnd, 5, MOD_CONTROL | MOD_ALT, 'E');
     RegisterHotKey(g_hwnd, 6, MOD_CONTROL | MOD_ALT, 'G');
+    if (!RegisterHotKey(g_hwnd, 7, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'R'))
+        Ui_Notify(L"Ctrl+Alt+Shift+R is used by another app - use the tray menu for Emergency Safe Reset");
 
     Main_ApplyAll();
 

@@ -3,6 +3,7 @@
  * Retained/Immediate GDI UI with High DPI scaling and double-buffered rendering.
  */
 #include "common.h"
+#include "color_math.h"
 
 /* Theme Colors */
 #define C_BG       RGB(12, 12, 16)
@@ -20,6 +21,7 @@
 #define C_DANG     RGB(255, 80, 80)
 
 static HWND    g_ui_hwnd;
+static int     g_ui_ready = 0;   /* fonts, scale, display modes and widgets exist */
 static float   g_sc = 1.0f;
 static Widget  g_w[MAX_WIDGETS];
 static int     g_nw = 0;
@@ -518,7 +520,7 @@ static void build_panel_tools(void)
     wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Diagnostic Tools & Test Patterns");
     wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Screen uniformity, gamma 2.2 calibration, dead pixels, and crash recovery.");
 
-    wadd(WT_DIV, 0, 248, 134, 986, 20, L"FULLSCREEN MONITOR TEST PATTERNS (CLICK TO LAUNCH)");
+    wadd(WT_DIV, 0, 248, 134, 986, 20, L"FULLSCREEN MONITOR TEST PATTERNS  (CLICK TO LAUNCH  ·  AUTO-CLOSE IN 10 s  ·  ANY KEY OR CLICK EXITS)");
 
     static const wchar_t *pats[] = {
         L"Pure Black", L"Pure White", L"Pure Red", L"Pure Green", L"Pure Blue",
@@ -544,6 +546,7 @@ static void build_panel_tools(void)
     wadd(WT_PRIMARY, ID_B_BACKUP_NOW,      248, 474, 230, 44, L"Backup Display State");
     wadd(WT_GHOST,   ID_B_RESTORE_BACKUP, 490, 474, 230, 44, L"Restore Last Good");
     wadd(WT_ACCENT,  ID_B_RESET_ALL,      732, 474, 230, 44, L"Reset All Changes");
+    wadd(WT_ACCENT,  ID_B_EMERGENCY_RESET, 974, 474, 230, 44, L"Emergency Safe Reset");
 
     wadd(WT_DIV, 0, 248, 544, 986, 20, L"GAMING MODE");
     Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 248, 574, 300, 42,
@@ -580,18 +583,20 @@ static void build_panel_settings(void)
 
     wadd(WT_DIV, 0, 248, 366, 986, 20, L"GLOBAL HOTKEYS");
     wadd(WT_LABEL, 0, 248, 392, 986, 20,
-         L"Ctrl+Alt+↑: Saturation +10%   ·   Ctrl+Alt+↓: Saturation −10%   ·   Ctrl+Alt+0: Reset All");
+         L"Ctrl+Alt+↑: Saturation +10%   ·   Ctrl+Alt+↓: Saturation −10%   ·   Ctrl+Alt+0: Reset All Channels & Tone Curves");
     wadd(WT_LABEL, 0, 248, 416, 986, 20,
          L"Ctrl+Alt+X: Toggle Crosshair   ·   Ctrl+Alt+E: Toggle Color Engine On/Off   ·   Ctrl+Alt+G: Gaming Mode");
+    wadd(WT_LABEL, 0, 248, 440, 986, 20,
+         L"Ctrl+Alt+Shift+R: EMERGENCY SAFE RESET  (closes test patterns, bypasses the color engine, restores the display)");
 
-    wadd(WT_DIV, 0, 248, 452, 986, 20, L"PRIVACY & LOCAL CONFIGURATION");
-    wadd(WT_LABEL, 0, 248, 478, 986, 36,
+    wadd(WT_DIV, 0, 248, 476, 986, 20, L"PRIVACY & LOCAL CONFIGURATION");
+    wadd(WT_LABEL, 0, 248, 502, 986, 36,
          L"100% Zero Telemetry Guarantee. No analytics, no accounts, no cloud calls. Configuration is saved locally.");
 
-    wadd(WT_GHOST, ID_B_OPEN_SETTINGS_DIR, 248, 526, 220, 38, L"Open App Data Folder");
+    wadd(WT_GHOST, ID_B_OPEN_SETTINGS_DIR, 248, 550, 220, 38, L"Open App Data Folder");
 
-    wadd(WT_DIV, 0, 248, 582, 986, 20, L"ABOUT PLEXUSX");
-    wadd(WT_LABEL, 0, 248, 608, 986, 36,
+    wadd(WT_DIV, 0, 248, 606, 986, 20, L"ABOUT PLEXUSX");
+    wadd(WT_LABEL, 0, 248, 632, 986, 36,
          L"PlexusX v" PX_VERSION L" · Built " PX_BUILD_DATE L" · Free & Open Source for Windows 10/11 x64\n"
          L"Legitimate Windows Magnification & Display APIs. Zero anti-cheat triggers.");
 }
@@ -754,8 +759,21 @@ static void draw_curve_preview(HDC dc, RECT rc)
     SelectObject(dc, op);
     DeleteObject(pen_grid);
 
+    /* Effective tone response of the GREEN channel for a neutral-gray input:
+     *   1. the DWM matrix (linear part: slope = column sum, offset = translation row 4)
+     *   2. the GPU gamma ramp (non-linear part: gamma / shadows / highlights / clarity)
+     * A bypassed engine is the identity line. */
     WORD ramp[3][256];
-    Eng_CalculateGammaRamp(&g_look, ramp);
+    MagColorEffect fx;
+    if (g_look.enabled) {
+        Eng_CalculateGammaRamp(&g_look, ramp);
+        cm_build_effect(&g_look, &fx);
+    } else {
+        cm_identity_ramp(ramp);
+        cm_identity(&fx);
+    }
+    float slope  = fx.transform[0][1] + fx.transform[1][1] + fx.transform[2][1];
+    float offset = fx.transform[4][1];
 
     HPEN pen_c = CreatePen(PS_SOLID, S(2), C_ACC);
     op = SelectObject(dc, pen_c);
@@ -764,7 +782,9 @@ static void draw_curve_preview(HDC dc, RECT rc)
 
     for (int i = 0; i < 256; i++) {
         int x = rc.left + (i * w) / 255;
-        float y_norm = ramp[1][i] / 65535.0f;
+        float lin = cm_clampf((i / 255.0f) * slope + offset, 0.0f, 1.0f);   /* DWM clamps to [0,1] */
+        int idx = (int)(lin * 255.0f + 0.5f);
+        float y_norm = ramp[1][idx] / 65535.0f;
         int y = rc.bottom - (int)(y_norm * (h - 8)) - 4;
         if (i == 0) MoveToEx(dc, x, y, NULL);
         else LineTo(dc, x, y);
@@ -773,7 +793,7 @@ static void draw_curve_preview(HDC dc, RECT rc)
     DeleteObject(pen_c);
 
     RECT tr = { rc.left + S(8), rc.top + S(6), rc.right - S(8), rc.top + S(24) };
-    draw_text(dc, tr, L"Hardware Gamma Ramp Curve Preview", g_fSmall, C_SUB, DT_LEFT);
+    draw_text(dc, tr, L"Effective Tone Response (Green · DWM matrix + GPU ramp)", g_fSmall, C_SUB, DT_LEFT);
 }
 
 static void draw_widget(HDC dc, Widget *k)
@@ -967,6 +987,9 @@ void Ui_Paint(HDC hdc, const RECT *rc)
     FillRect(hdc, rc, bg);
     DeleteObject(bg);
 
+    /* An early paint must never touch fonts / display modes that do not exist yet */
+    if (!g_ui_ready) return;
+
     /* Sidebar Background */
     RECT sr = { 0, 0, S(PX_SIDE_W), S(PX_WIN_H) };
     HBRUSH side_br = CreateSolidBrush(C_SIDE);
@@ -1048,6 +1071,8 @@ void Ui_Paint(HDC hdc, const RECT *rc)
 
 int Ui_MouseDown(int x, int y)
 {
+    if (!g_ui_ready) return 0;
+
     /* Check split preview drag */
     for (int i = 0; i < g_nw; i++) {
         if (g_w[i].type == WT_SPLIT_PREVIEW) {
@@ -1214,6 +1239,8 @@ int Ui_MouseDown(int x, int y)
 
 int Ui_MouseMove(int x, int y, int dragging)
 {
+    if (!g_ui_ready) return 0;
+
     if (dragging && g_drag_split) {
         for (int i = 0; i < g_nw; i++) {
             if (g_w[i].type == WT_SPLIT_PREVIEW) {
@@ -1499,6 +1526,9 @@ int Ui_Exec(int id)
         if (Eng_RestoreLastGood()) Ui_Notify(L"Restored Last Known Good Configuration");
         else Ui_Notify(L"No Previous Backup Found");
         return 1;
+    case ID_B_EMERGENCY_RESET:
+        Main_EmergencyReset();
+        return 1;
     case ID_B_RESET_ALL:
         Eng_Reset();
         Modes_ApplyNative();
@@ -1542,23 +1572,43 @@ int Ui_Exec(int id)
     return 0;
 }
 
+/* Must run BEFORE CreateWindowExW: the very first window messages (WM_CREATE, WM_SIZE,
+ * WM_PAINT, hit-testing) may already use the fonts, the DPI scale and the display
+ * modes created here.  `hwnd` is therefore allowed to be NULL; bind the window with
+ * Ui_AttachWindow() once it exists. */
 void Ui_Init(HWND hwnd, HINSTANCE inst)
 {
+    (void)inst;
     g_ui_hwnd = hwnd;
+    g_ui_ready = 0;
+
     HDC sdc = GetDC(NULL);
     g_sc = GetDeviceCaps(sdc, LOGPIXELSX) / 96.0f;
     ReleaseDC(NULL, sdc);
     if (g_sc < 0.75f) g_sc = 1.0f;
 
     make_fonts();
-    Modes_Refresh();
+    if (Modes_MonitorCount() == 0)
+        Modes_Refresh();        /* display modes / monitors (wWinMain normally did this already) */
     Prof_Init();
     Tools_Init();
     Ui_RebuildPanel();
+    g_ui_ready = 1;
+}
+
+void Ui_AttachWindow(HWND hwnd)
+{
+    g_ui_hwnd = hwnd;
+}
+
+int Ui_IsReady(void)
+{
+    return g_ui_ready;
 }
 
 void Ui_Free(void)
 {
+    g_ui_ready = 0;
     DeleteObject(g_fLogo);
     DeleteObject(g_fH1);
     DeleteObject(g_fH2);
@@ -1573,7 +1623,7 @@ void Ui_SetPanel(int side_id)
 {
     g_panel = side_id;
     Ui_RebuildPanel();
-    InvalidateRect(g_ui_hwnd, NULL, FALSE);
+    if (g_ui_hwnd) InvalidateRect(g_ui_hwnd, NULL, FALSE);
 }
 
 int  Ui_Panel(void) { return g_panel; }

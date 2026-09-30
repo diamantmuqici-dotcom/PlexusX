@@ -43,25 +43,8 @@
 #define WM_APP_TOAST      (WM_APP + 3)   /* notification toast */
 
 /* ---------------- Color Engine Parameters ---------------- */
-typedef struct Look {
-    int   enabled;         /* 1 = active, 0 = bypassed/neutral */
-    float sat;             /* 0..300 (%)   100 = neutral, 300 = max application boost */
-    float vibrance;        /* 0..300 (%)   100 = neutral, smart saturation */
-    float bri;             /* 0..200 (%)   100 = neutral (0.0 to 2.0x) */
-    float con;             /* 0..200 (%)   100 = neutral (0.0 to 2.0x) */
-    float gamma;           /* 0.50..2.50   1.00 = neutral gamma curve */
-    float temp;            /* 3000..10000  (Kelvin) 6500 = standard D65 neutral */
-    float tint;            /* -100..100    (%) negative = green, positive = magenta */
-    float r_gain;          /* 0..200 (%)   100 = neutral */
-    float g_gain;          /* 0..200 (%)   100 = neutral */
-    float b_gain;          /* 0..200 (%)   100 = neutral */
-    float shadows;         /* 0..200 (%)   100 = neutral (toe shadow lift / crush) */
-    float highlights;      /* 0..200 (%)   100 = neutral (shoulder compression / boost) */
-    float black_level;     /* 0..200 (%)   100 = neutral (floor level) */
-    float white_point;     /* 0..200 (%)   100 = neutral (ceiling level) */
-    float clarity;         /* 0..200 (%)   100 = neutral (midtone S-curve dehaze) */
-    float hue;             /* -180..180    (deg) 0 = neutral */
-} Look;
+/* The Look struct lives in look.h (Windows-free) so the colour math can be unit-tested. */
+#include "look.h"
 
 /* ---------------- Per-Game Profile Structure ---------------- */
 #define MAX_SUB_MODES 12
@@ -296,6 +279,9 @@ enum {
     ID_B_DIAG_COLOR_TEST,
     ID_B_DIAG_HDR_TEST,
 
+    /* Safety */
+    ID_B_EMERGENCY_RESET,
+
     /* Crosshair Shapes */
     ID_XH_SHAPE_BASE = 450,
     ID_XH_PRESET_BASE = 470,     /* 470..485 */
@@ -367,7 +353,8 @@ void        Eng_Init(void);
 void        Eng_Shutdown(void);
 void        Eng_SetPaths(const wchar_t *ramps, const wchar_t *dirty, int was_dirty);
 void        Eng_Apply(const Look *lk);
-void        Eng_Reset(void);
+void        Eng_Reset(void);       /* forced: identity matrix + original gamma ramps (crash / emergency safe) */
+void        Eng_Resync(void);      /* forget cached hardware state so the next Eng_Apply() re-asserts it */
 int         Eng_Available(void);
 void        Eng_SetTargetMonitor(int idx); /* -1 = all, 0.. = specific display */
 int         Eng_GetTargetMonitor(void);
@@ -449,7 +436,9 @@ void        Tools_ToggleGamingMode(void);
 int         Tools_IsGamingMode(void);
 
 /* UI & Window Rendering (ui.c) */
-void        Ui_Init(HWND hwnd, HINSTANCE inst);
+void        Ui_Init(HWND hwnd, HINSTANCE inst);   /* hwnd may be NULL: call BEFORE the window exists */
+void        Ui_AttachWindow(HWND hwnd);            /* bind the main window once it has been created */
+int         Ui_IsReady(void);                      /* fonts, scale, modes and widgets are initialised */
 void        Ui_Free(void);
 void        Ui_Paint(HDC hdc, const RECT *rc);
 int         Ui_MouseDown(int x, int y);
@@ -474,6 +463,7 @@ const wchar_t *Ui_GetFilter(void);
 /* Main Application Helpers (main.c) */
 void        Main_ApplyAll(void);
 void        Main_Save(void);
+void        Main_EmergencyReset(void);   /* Ctrl+Alt+Shift+R: close patterns, bypass engine, Eng_Reset() */
 const wchar_t *Main_GetExePath(void);
 const wchar_t *Main_GetAppDataPath(void);
 extern HWND      g_hwnd;
