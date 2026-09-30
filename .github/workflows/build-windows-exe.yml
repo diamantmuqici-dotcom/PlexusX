@@ -74,7 +74,9 @@ jobs:
           ```
           certutil -hashfile ChromaX.exe SHA256
           ```
-          Compare against `SHA256SUMS.txt` in this release (or the hash on the site's download card).
+          Compare against `SHA256SUMS.txt` in this release. (The site publishes the hash of
+          its own copy; builds are not byte-reproducible across machines, so verify the exact
+          file you downloaded against the hash published right next to it.)
 
           ## What it does
           - Saturation to 300% plus vibrance, brightness, contrast, gamma, temperature, tint, RGB, shadows/highlights, black & white point, sharpness and clarity — through the Windows colour layer and GPU gamma ramps.

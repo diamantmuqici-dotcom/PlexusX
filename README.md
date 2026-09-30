@@ -136,10 +136,19 @@ certutil -hashfile ChromaX.exe SHA256     # Windows
 sha256sum ChromaX.exe                     # anywhere else
 ```
 
-The hash is published on the site's download card, in `site/download/SHA256SUMS.txt`,
-and in every GitHub release. The exe is not code-signed (that costs money per
-certificate and says nothing about behaviour); the Apache-2.0 source is right here so
-you can read what every line does.
+**Verify the file you actually downloaded against the hash published right next to
+it:**
+
+- downloaded from the **site** → `site/download/SHA256SUMS.txt` (also shown on the
+  site's download card);
+- downloaded from a **GitHub release** → the `SHA256SUMS.txt` asset in that release.
+
+One honest caveat: the cross-compiler's code generation is not byte-reproducible
+across build machines, so the site's exe and a release's exe are functionally
+identical but carry different hashes. Each published file is verified against its
+own companion hash — that is the guarantee. The exe is not code-signed (that costs
+money per certificate and says nothing about behaviour); the Apache-2.0 source is
+right here so you can read what every line does.
 
 ## Building
 
