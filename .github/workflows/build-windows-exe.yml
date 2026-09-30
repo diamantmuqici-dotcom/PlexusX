@@ -85,8 +85,12 @@ jobs:
 
           What it never does: read game memory, edit game files, inject code, install drivers, or phone home.
           EOF
-          gh release create "$VER" \
-            --title "ChromaX $VER" \
-            --notes-file RELEASE_NOTES.md \
-            --target "${GITHUB_SHA}" \
-            dist/ChromaX.exe dist/SHA256SUMS.txt
+          if gh release view "$VER" >/dev/null 2>&1; then
+            gh release upload "$VER" dist/ChromaX.exe dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "$VER" \
+              --title "ChromaX $VER" \
+              --notes-file RELEASE_NOTES.md \
+              --target "${GITHUB_SHA}" \
+              dist/ChromaX.exe dist/SHA256SUMS.txt
+          fi
