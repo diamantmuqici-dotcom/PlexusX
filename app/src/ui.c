@@ -16,7 +16,6 @@
 #define C_DIM      RGB(95, 95, 110)
 #define C_ACC      RGB(198, 255, 61)     /* Vibrant Lime */
 #define C_ACC2     RGB(79, 227, 255)     /* Cyan */
-#define C_PURPLE   RGB(139, 92, 246)
 #define C_DARK     RGB(10, 10, 14)
 #define C_DANG     RGB(255, 80, 80)
 
@@ -44,10 +43,10 @@ static void make_fonts(void)
 {
     g_fLogo   = CreateFontW(-S(20), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
     g_fH1     = CreateFontW(-S(26), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fH2     = CreateFontW(-S(16), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fBody   = CreateFontW(-S(14), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fSmall  = CreateFontW(-S(12), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fMono   = CreateFontW(-S(14), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
+    g_fH2     = CreateFontW(-S(15), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    g_fBody   = CreateFontW(-S(13), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    g_fSmall  = CreateFontW(-S(11), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    g_fMono   = CreateFontW(-S(13), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
     g_fBigVal = CreateFontW(-S(42), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
 }
 
@@ -145,67 +144,116 @@ static void build_panel_home(void)
 
     /* Live Visual Preview (Before / After Split) */
     wadd(WT_DIV, 0, 248, 442, 986, 24, L"LIVE VISUAL PREVIEW  (DRAG DIVIDER TO COMPARE)");
-    Widget *prev = wadd(WT_SPLIT_PREVIEW, 0, 248, 472, 986, 260, NULL);
-    (void)prev;
+    wadd(WT_SPLIT_PREVIEW, 0, 248, 472, 986, 260, NULL);
 
     /* Bottom quick toggles */
     Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 248, 746, 220, 36,
                           Tools_IsGamingMode() ? L"★ Gaming Mode: ACTIVE" : L"☆ Gaming Mode: OFF");
     gm_btn->flags = Tools_IsGamingMode() ? 1 : 0;
     wadd(WT_GHOST, ID_B_BACKUP_NOW, 480, 746, 200, 36, L"Backup Display State");
-    wadd(WT_GHOST, ID_B_HOME_APPLY_GAME, 692, 746, 220, 36, L"Apply Current Game Look");
+    wadd(WT_PRIMARY, ID_B_HOME_APPLY_GAME, 692, 746, 240, 36, L"Apply Current Game Look");
 }
 
 /* ---------------- 2. GAMES PANEL ---------------- */
 static void build_panel_games(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Game Profiles Library");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Dedicated starting looks per game. Automatically switches when game launches.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Game Profiles Library");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Dedicated starting looks per game. Automatically switches when game launches.");
 
-    wadd(WT_DIV, 0, 248, 150, 986, 24, L"AVAILABLE PROFILES");
-
+    /* Left Column: Game list cards */
+    wadd(WT_DIV, 0, 248, 130, 440, 20, L"GAMES LIBRARY");
     int count = Prof_Count();
+    int active_idx = Prof_ActiveIndex();
     int row = 0;
     for (int i = 0; i < count && row < 8; i++) {
         Profile *p = Prof_Get(i);
         if (g_game_filter[0] && !wcsstr(p->name, g_game_filter)) continue;
 
-        int y = 184 + row * 66;
-        Widget *card = wadd(WT_GAME_CARD, ID_GAME_CARD_BASE + i, 248, y, 986, 58, p->name);
-        card->state = (i == Prof_ActiveIndex());
+        int y = 156 + row * 62;
+        Widget *card = wadd(WT_GAME_CARD, ID_GAME_CARD_BASE + i, 248, y, 440, 54, p->name);
+        card->state = (i == active_idx);
         wsprintfW(card->sub, L"%s  ·  %s", p->exe, p->tag);
-        wsprintfW(card->val, L"Mode: %s (%d modes)", p->sub[p->active_sub].name, p->sub_count);
-
+        wsprintfW(card->val, p->favorite ? L"★ %s" : L"%s", p->sub[p->active_sub].name);
         row++;
     }
 
-    wadd(WT_GHOST, ID_B_CUSTOM_GAME_ADD, 248, 730, 220, 42, L"+ Add Custom Game");
-    wadd(WT_PRIMARY, ID_B_HOME_APPLY_GAME, 480, 730, 220, 42, L"Apply Selected Profile");
+    /* Right Column: Selected Game Inspector & Sub-Mode Selector */
+    Profile *sel = Prof_Get(active_idx);
+    if (sel) {
+        wadd(WT_DIV, 0, 710, 130, 524, 20, L"ACTIVE GAME INSPECTOR");
+
+        Widget *spec = wadd(WT_CARD, 0, 710, 156, 524, 80, L"SELECTED TITLE");
+        wsprintfW(spec->val, L"%s (%s)", sel->name, sel->tag);
+        wsprintfW(spec->sub, L"Executable: %s  ·  %d Available Sub-Modes", sel->exe, sel->sub_count);
+
+        wadd(WT_BTN, ID_B_GAME_FAV_TOGGLE, 1100, 166, 120, 30, sel->favorite ? L"★ Favorite" : L"☆ Add Fav");
+
+        /* Sub-modes buttons */
+        wadd(WT_DIV, 0, 710, 246, 524, 20, L"SELECTABLE VISUAL SUB-MODES");
+
+        for (int s = 0; s < sel->sub_count && s < MAX_SUB_MODES; s++) {
+            int col = s % 3;
+            int r = s / 3;
+            int bx = 710 + col * 176;
+            int by = 272 + r * 44;
+            int is_sub_act = (s == sel->active_sub);
+            Widget *btn = wadd(is_sub_act ? WT_PRIMARY : WT_GHOST, ID_GAME_SUB_BASE + s, bx, by, 168, 38, sel->sub[s].name);
+            (void)btn;
+        }
+
+        /* Active Sub-mode values summary */
+        const Look *slk = &sel->sub[sel->active_sub].look;
+        Widget *val_card = wadd(WT_CARD, 0, 710, 460, 524, 76, L"TUNED PARAMETERS");
+        wsprintfW(val_card->val, L"Sat: %d%%   Vib: %d%%   Gamma: %.2f   Temp: %dK",
+                  (int)slk->sat, (int)slk->vibrance, slk->gamma, (int)slk->temp);
+        wsprintfW(val_card->sub, L"Shadows: %d%%   Highlights: %d%%   Clarity: %d%%",
+                  (int)slk->shadows, (int)slk->highlights, (int)slk->clarity);
+
+        /* Action buttons */
+        wadd(WT_PRIMARY, ID_B_HOME_APPLY_GAME, 710, 550, 250, 42, L"Apply This Profile");
+        wadd(WT_GHOST,   ID_B_EXPORT_PRESET,   970, 550, 124, 42, L"Export JSON");
+        wadd(WT_GHOST,   ID_B_COPY_PRESET,    1104, 550, 130, 42, L"Duplicate");
+    }
+
+    /* Bottom action bar */
+    wadd(WT_GHOST, ID_B_CUSTOM_GAME_ADD, 248, 726, 220, 42, L"+ Add Custom Game");
+    wadd(WT_GHOST, ID_B_IMPORT_PRESET,   480, 726, 220, 42, L"Import Profile JSON");
 }
 
 /* ---------------- 3. DISPLAY PANEL ---------------- */
 static void build_panel_display(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Display & Refresh Rate");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Resolution, refresh rates, stretched 4:3 modes & HDR management.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Display & Refresh Rate Manager");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Resolution, refresh rates, stretched 4:3 competitive presets & HDR management.");
 
     ModeInfo cur;
     Modes_Current(&cur);
-    Widget *cur_card = wadd(WT_CARD, 0, 248, 150, 986, 74, L"CURRENT ACTIVE DISPLAY MODE");
+    Widget *cur_card = wadd(WT_CARD, 0, 248, 130, 986, 70, L"CURRENT ACTIVE DISPLAY MODE");
     wsprintfW(cur_card->val, L"%d × %d @ %d Hz  (%s)", cur.w, cur.h, cur.hz,
               cur.aspect == 1 ? L"4:3 Stretched" : cur.aspect == 2 ? L"16:10" : cur.aspect == 3 ? L"Ultrawide" : L"16:9 Native");
     lstrcpyW(cur_card->sub, L"Legitimate Windows display settings change with automatic rollback safety.");
 
-    wadd(WT_DIV, 0, 248, 238, 986, 24, L"SUPPORTED RESOLUTION & REFRESH PRESETS");
+    /* One-click Aspect Ratio & Stretched Presets */
+    wadd(WT_DIV, 0, 248, 208, 986, 20, L"ONE-CLICK DISPLAY RESOLUTION PRESETS");
+    wadd(WT_PRIMARY, ID_B_MODE_NATIVE,      248, 232, 134, 38, L"16:9 Native");
+    wadd(WT_GHOST,   ID_B_MODE_43_COMP,     390, 232, 140, 38, L"4:3 1280x960");
+    wadd(WT_GHOST,   ID_B_MODE_43_STRETCH,  538, 232, 140, 38, L"4:3 1440x1080");
+    wadd(WT_GHOST,   ID_B_MODE_43_CLASSIC,  686, 232, 140, 38, L"4:3 1600x1200");
+    wadd(WT_GHOST,   ID_B_MODE_1610,        834, 232, 134, 38, L"16:10 Presets");
+    wadd(WT_GHOST,   ID_B_MODE_ULTRAWIDE,   976, 232, 140, 38, L"Ultrawide");
+    wadd(WT_ACCENT,  ID_B_MODE_MAX_HZ,     1124, 232, 110, 38, L"Max Hz");
+
+    /* Supported Modes List */
+    wadd(WT_DIV, 0, 248, 280, 986, 20, L"SUPPORTED RESOLUTION & REFRESH MODES");
 
     int mode_cnt = Modes_Count();
     int shown = 0;
-    for (int i = 0; i < mode_cnt && shown < 8; i++) {
+    for (int i = 0; i < mode_cnt && shown < 7; i++) {
         ModeInfo *m = Modes_Get(i);
-        int y = 270 + shown * 46;
+        int y = 304 + shown * 42;
         wchar_t buf[80];
         wsprintfW(buf, L"%d × %d @ %d Hz", m->w, m->h, m->hz);
-        Widget *row = wadd(WT_ROW, ID_MODE_ROW_BASE + i, 248, y, 986, 40, buf);
+        Widget *row = wadd(WT_ROW, ID_MODE_ROW_BASE + i, 248, y, 986, 38, buf);
         row->state = (m->w == cur.w && m->h == cur.h && m->hz == cur.hz);
         if (m->aspect == 1) lstrcpyW(row->sub, L"4:3 Stretched");
         else if (m->aspect == 2) lstrcpyW(row->sub, L"16:10");
@@ -214,14 +262,16 @@ static void build_panel_display(void)
         shown++;
     }
 
-    wadd(WT_PRIMARY, ID_B_MODE_APPLY,   248, 660, 200, 44, L"Apply Selected Mode");
-    wadd(WT_GHOST,   ID_B_MODE_MAX_HZ,  460, 660, 220, 44, L"Max Available Hz");
-    wadd(WT_GHOST,   ID_B_MODE_NATIVE,  692, 660, 200, 44, L"Reset to Native");
-    wadd(WT_GHOST,   ID_B_MODE_OPENHDR, 904, 660, 230, 44, L"Windows HDR Settings");
+    wadd(WT_PRIMARY, ID_B_MODE_APPLY,   248, 616, 220, 42, L"Apply Selected Mode");
+    wadd(WT_GHOST,   ID_B_MODE_MAX_HZ,  480, 616, 220, 42, L"Max Available Refresh Rate");
+    wadd(WT_GHOST,   ID_B_MODE_NATIVE,  712, 616, 200, 42, L"Reset to Native");
+    wadd(WT_GHOST,   ID_B_MODE_OPENHDR, 924, 616, 240, 42, L"Windows HDR Settings");
 
-    wadd(WT_DIV, 0, 248, 718, 986, 20, L"HDR GUIDANCE");
-    wadd(WT_LABEL, 0, 248, 744, 986, 40,
-         L"Why does HDR look washed out on some games? Windows maps SDR game buffers to sRGB space in HDR mode. Use PlexusX Saturation (150-220%) to restore vibrant dynamic colors in HDR!");
+    /* Rollback note & HDR guidance */
+    wadd(WT_DIV, 0, 248, 672, 986, 20, L"ROLLBACK SAFETY & HDR GUIDANCE");
+    wadd(WT_LABEL, 0, 248, 696, 986, 40,
+         L"Safety Note: Changing display resolution may cause brief display flicker. Windows verifies modes with automatic rollback protection.\n"
+         L"HDR Guidance: Windows maps SDR colors into sRGB space in HDR mode. Use PlexusX Saturation (150–220%) to restore rich, vivid gaming colors!");
 }
 
 /* ---------------- 4. COLOR PANEL ---------------- */
@@ -289,13 +339,12 @@ static void build_panel_color(void)
     set_slider(s15, g_look.white_point, 0, 200, L"%");
 
     /* Response Curve Preview */
-    Widget *curve = wadd(WT_CURVE_PREVIEW, 0, 740, 560, 470, 138, NULL);
-    (void)curve;
+    wadd(WT_CURVE_PREVIEW, 0, 740, 560, 470, 138, NULL);
 
     /* Bottom Action Buttons */
-    wadd(WT_PRIMARY, ID_B_RESET_COLOR, 248, 720, 160, 44, L"Reset All");
-    wadd(WT_GHOST,   ID_B_SAVE_PRESET, 420, 720, 180, 44, L"Save as Preset");
-    wadd(WT_GHOST,   ID_B_COPY_PRESET, 612, 720, 160, 44, L"Copy Preset");
+    wadd(WT_PRIMARY, ID_B_RESET_COLOR,   248, 720, 160, 44, L"Reset All");
+    wadd(WT_GHOST,   ID_B_SAVE_PRESET,   420, 720, 180, 44, L"Save as Preset");
+    wadd(WT_GHOST,   ID_B_COPY_PRESET,   612, 720, 160, 44, L"Copy Preset");
     wadd(WT_GHOST,   ID_B_EXPORT_PRESET, 784, 720, 180, 44, L"Export JSON");
     wadd(WT_GHOST,   ID_B_IMPORT_PRESET, 976, 720, 180, 44, L"Import JSON");
 }
@@ -322,7 +371,7 @@ static void build_panel_presets(void)
     }
 
     wadd(WT_DIV, 0, 248, 696, 986, 20, L"CUSTOM LOOK MANAGEMENT");
-    wadd(WT_GHOST, ID_B_SAVE_PRESET, 248, 726, 200, 42, L"Create New Look");
+    wadd(WT_GHOST, ID_B_SAVE_PRESET,   248, 726, 200, 42, L"Create New Look");
     wadd(WT_GHOST, ID_B_EXPORT_PRESET, 460, 726, 200, 42, L"Export Preset JSON");
     wadd(WT_GHOST, ID_B_IMPORT_PRESET, 672, 726, 200, 42, L"Import Preset JSON");
 }
@@ -330,38 +379,47 @@ static void build_panel_presets(void)
 /* ---------------- 6. CROSSHAIR PANEL ---------------- */
 static void build_panel_crosshair(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Desktop Overlay Crosshair");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Layered click-through overlay. Zero game file modifications or injection.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Desktop Overlay Crosshair");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Layered click-through overlay. Zero game file modifications or injection.");
 
-    Widget *t = wadd(WT_TOGGLE, ID_T_XH, 248, 150, 320, 36, L"Crosshair Overlay Enabled");
+    Widget *t = wadd(WT_TOGGLE, ID_T_XH, 248, 134, 300, 34, L"Crosshair Overlay Enabled");
     t->state = g_xh.on;
 
-    wadd(WT_DIV, 0, 248, 200, 986, 24, L"SHAPE SELECTION");
+    /* Crosshair Library Presets */
+    wadd(WT_DIV, 0, 248, 178, 986, 20, L"PRESET CROSSHAIR LIBRARY");
+    int pres_cnt = 0;
+    const XhPreset *plist = Xh_GetPresets(&pres_cnt);
+    for (int i = 0; i < pres_cnt && i < 10; i++) {
+        int x = 248 + i * 98;
+        wadd(WT_GHOST, ID_XH_PRESET_BASE + i, x, 202, 92, 34, plist[i].name);
+    }
+
+    wadd(WT_DIV, 0, 248, 248, 986, 20, L"SHAPE SELECTION");
 
     static const wchar_t *shapes[] = { L"Dot", L"Cross", L"Circle", L"Square", L"Plus", L"Chevron", L"T", L"T-Type" };
     for (int i = 0; i < 8; i++) {
-        Widget *k = wadd(WT_SHAPE, ID_XH_SHAPE_BASE + i, 248 + i * 122, 230, 114, 76, shapes[i]);
+        Widget *k = wadd(WT_SHAPE, ID_XH_SHAPE_BASE + i, 248 + i * 122, 272, 114, 72, shapes[i]);
         k->state = (g_xh.shape == i);
     }
 
     /* Sliders */
-    Widget *s1 = wadd(WT_SLIDER, ID_SL_XH_SIZE, 248, 326, 470, 68, L"Crosshair Size");
+    Widget *s1 = wadd(WT_SLIDER, ID_SL_XH_SIZE, 248, 356, 470, 68, L"Crosshair Size");
     set_slider(s1, (float)g_xh.size, 4, 64, L"%");
 
-    Widget *s2 = wadd(WT_SLIDER, ID_SL_XH_GAP, 740, 326, 470, 68, L"Center Gap");
+    Widget *s2 = wadd(WT_SLIDER, ID_SL_XH_GAP, 740, 356, 470, 68, L"Center Gap");
     set_slider(s2, (float)g_xh.gap, 0, 32, L"%");
 
-    Widget *s3 = wadd(WT_SLIDER, ID_SL_XH_THICK, 248, 400, 470, 68, L"Thickness");
+    Widget *s3 = wadd(WT_SLIDER, ID_SL_XH_THICK, 248, 430, 470, 68, L"Thickness");
     set_slider(s3, (float)g_xh.thick, 1, 12, L"%");
 
-    Widget *s4 = wadd(WT_SLIDER, ID_SL_XH_OPACITY, 740, 400, 470, 68, L"Opacity");
+    Widget *s4 = wadd(WT_SLIDER, ID_SL_XH_OPACITY, 740, 430, 470, 68, L"Opacity");
     set_slider(s4, (float)g_xh.opacity, 10, 100, L"%");
 
     /* Toggles */
-    Widget *to = wadd(WT_TOGGLE, ID_T_XH_OUTLINE, 248, 484, 280, 36, L"Black Outline");
+    Widget *to = wadd(WT_TOGGLE, ID_T_XH_OUTLINE, 248, 508, 280, 34, L"Black Outline");
     to->state = g_xh.outline;
 
-    Widget *td = wadd(WT_TOGGLE, ID_T_XH_DOT, 540, 484, 280, 36, L"Center Dot");
+    Widget *td = wadd(WT_TOGGLE, ID_T_XH_DOT, 540, 508, 280, 34, L"Center Dot");
     td->state = g_xh.center_dot;
 
     /* Color Swatches */
@@ -371,37 +429,47 @@ static void build_panel_crosshair(void)
         RGB(255, 255, 255), RGB(0, 0, 0)
     };
 
-    wadd(WT_LABEL, 0, 248, 540, 300, 20, L"PRIMARY COLOR");
+    wadd(WT_LABEL, 0, 248, 554, 300, 18, L"PRIMARY COLOR");
     for (int i = 0; i < 10; i++) {
-        Widget *sw = wadd(WT_SWATCH, ID_SWATCH_BASE + i, 248 + i * 50, 568, 42, 34, NULL);
+        Widget *sw = wadd(WT_SWATCH, ID_SWATCH_BASE + i, 248 + i * 50, 576, 42, 34, NULL);
         sw->state = (g_xh.color == cols[i]);
         wsprintfW(sw->val, L"%d", (int)cols[i]);
     }
 
-    wadd(WT_LABEL, 0, 248, 620, 300, 20, L"OUTLINE COLOR");
+    wadd(WT_LABEL, 0, 248, 622, 300, 18, L"OUTLINE COLOR");
     for (int i = 0; i < 10; i++) {
-        Widget *sw = wadd(WT_SWATCH, ID_SWATCH_O_BASE + i, 248 + i * 50, 648, 42, 34, NULL);
+        Widget *sw = wadd(WT_SWATCH, ID_SWATCH_O_BASE + i, 248 + i * 50, 644, 42, 34, NULL);
         sw->state = (g_xh.ocolor == cols[i]);
         wsprintfW(sw->val, L"%d", (int)cols[i]);
     }
 
-    wadd(WT_DIV, 0, 248, 706, 986, 20, L"CROSSHAIR SHORTCUT");
-    wadd(WT_LABEL, 0, 248, 736, 986, 24, L"Global Hotkey: Ctrl+Alt+X toggles the crosshair instantly in any game.");
+    wadd(WT_DIV, 0, 248, 700, 986, 20, L"CROSSHAIR SHORTCUT");
+    wadd(WT_LABEL, 0, 248, 726, 986, 24, L"Global Hotkey: Ctrl+Alt+X toggles the crosshair instantly in any game.");
 }
 
 /* ---------------- 7. MONITORS PANEL ---------------- */
 static void build_panel_monitors(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Multi-Monitor Manager");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Target individual monitors or synchronize adjustments across all screens.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Multi-Monitor Manager");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Target individual monitors or synchronize adjustments across all screens.");
+
+    /* Target Selection */
+    wadd(WT_DIV, 0, 248, 130, 986, 20, L"COLOR ENGINE TARGET SELECTION");
+    int cur_target = Eng_GetTargetMonitor();
+    Widget *b_all = wadd(cur_target < 0 ? WT_PRIMARY : WT_GHOST, ID_B_MONITOR_TARGET_ALL, 248, 154, 260, 38, L"Apply to ALL Monitors");
+    (void)b_all;
+    Widget *b_sel = wadd(cur_target >= 0 ? WT_PRIMARY : WT_GHOST, ID_B_MONITOR_TARGET_SEL, 520, 154, 260, 38, L"Apply to SELECTED Monitor");
+    (void)b_sel;
+
+    wadd(WT_DIV, 0, 248, 206, 986, 20, L"CONNECTED DISPLAYS (CLICK TO SELECT)");
 
     int mon_cnt = Modes_MonitorCount();
-    for (int i = 0; i < mon_cnt; i++) {
+    for (int i = 0; i < mon_cnt && i < 4; i++) {
         MonitorInfo *m = Modes_GetMonitor(i);
-        int y = 160 + i * 110;
-        Widget *card = wadd(WT_MONITOR_CARD, ID_MONITOR_CARD_BASE + i, 248, y, 986, 96, m->friendly);
+        int y = 232 + i * 96;
+        Widget *card = wadd(WT_MONITOR_CARD, ID_MONITOR_CARD_BASE + i, 248, y, 986, 84, m->friendly);
         card->state = (i == Modes_CurrentMonitorIndex());
-        wsprintfW(card->sub, L"Device: %s  ·  %s", m->dev_name, m->adapter);
+        wsprintfW(card->sub, L"Device: %s  ·  Adapter: %s", m->dev_name, m->adapter);
         wsprintfW(card->val, L"%d × %d @ %d Hz  (%s)", m->current_w, m->current_h, m->current_hz,
                   m->is_primary ? L"Primary Monitor" : L"Secondary Monitor");
     }
@@ -413,39 +481,44 @@ static void build_panel_monitors(void)
 /* ---------------- 8. AUTOMATION PANEL ---------------- */
 static void build_panel_automation(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Profile Automation Rules");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Event-driven profile switching based on foreground application.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Profile Automation & Detection Rules");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Event-driven profile switching based on foreground application.");
 
-    Widget *t1 = wadd(WT_TOGGLE, ID_T_DETECT, 248, 160, 420, 36, L"Auto Detect Games on Launch");
+    Widget *t1 = wadd(WT_TOGGLE, ID_T_DETECT, 248, 140, 420, 34, L"Auto Detect Games on Launch");
     t1->state = Prof_Detect();
 
-    Widget *t2 = wadd(WT_TOGGLE, ID_T_AUTO_RESTORE, 248, 210, 420, 36, L"Auto Restore Desktop Look on Exit");
+    Widget *t2 = wadd(WT_TOGGLE, ID_T_AUTO_RESTORE, 248, 186, 420, 34, L"Auto Restore Desktop Look on Exit");
     t2->state = Prof_GetAutoRestore();
 
-    wadd(WT_DIV, 0, 248, 270, 986, 24, L"CURRENT FOREGROUND PROCESS MONITOR");
-    Widget *fg_card = wadd(WT_CARD, 0, 248, 304, 986, 76, L"DETECTED PROCESS");
+    /* Switching Delay */
+    wadd(WT_DIV, 0, 248, 236, 986, 20, L"APPLICATION SWITCHING DELAY");
+    wadd(WT_LABEL, 0, 248, 260, 986, 20, L"Delay prevents temporary mode flickers while games load video intros:");
+    int cur_delay = Prof_GetDelayMs();
+    wadd(cur_delay == 0 ? WT_PRIMARY : WT_GHOST, ID_B_DELAY_0, 248, 286, 120, 36, L"0 ms (Instant)");
+    wadd(cur_delay == 500 ? WT_PRIMARY : WT_GHOST, ID_B_DELAY_500, 380, 286, 120, 36, L"500 ms");
+    wadd(cur_delay == 1000 ? WT_PRIMARY : WT_GHOST, ID_B_DELAY_1000, 512, 286, 120, 36, L"1000 ms");
+    wadd(cur_delay == 2000 ? WT_PRIMARY : WT_GHOST, ID_B_DELAY_2000, 644, 286, 120, 36, L"2000 ms");
+
+    wadd(WT_DIV, 0, 248, 344, 986, 20, L"CURRENT FOREGROUND PROCESS MONITOR");
+    Widget *fg_card = wadd(WT_CARD, 0, 248, 372, 986, 76, L"DETECTED ACTIVE APPLICATION");
     const wchar_t *fg = Prof_CurrentForeground();
     wsprintfW(fg_card->val, L"Executable: %s", fg && fg[0] ? fg : L"None / Desktop");
     int match_idx = Prof_FindExe(fg);
     if (match_idx >= 0) {
         Profile *mp = Prof_Get(match_idx);
-        wsprintfW(fg_card->sub, L"Matched Game: %s  (Profile: %s)", mp->name, mp->sub[mp->active_sub].name);
+        wsprintfW(fg_card->sub, L"Matched Game: %s  (Active Profile: %s)", mp->name, mp->sub[mp->active_sub].name);
     } else {
         lstrcpyW(fg_card->sub, L"No profile associated. Desktop look remains active.");
     }
-
-    wadd(WT_DIV, 0, 248, 410, 986, 24, L"SWITCHING DELAY");
-    wadd(WT_LABEL, 0, 248, 440, 986, 40,
-         L"Some games switch display modes or launch video intros. A small delay prevents unnecessary reapplication.");
 }
 
 /* ---------------- 9. TOOLS PANEL ---------------- */
 static void build_panel_tools(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Diagnostic Tools & Test Patterns");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Screen uniformity, gamma 2.2 calibration, dead pixels, and crash recovery.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Diagnostic Tools & Test Patterns");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Screen uniformity, gamma 2.2 calibration, dead pixels, and crash recovery.");
 
-    wadd(WT_DIV, 0, 248, 150, 986, 24, L"FULLSCREEN MONITOR TEST PATTERNS  (CLICK TO LAUNCH)");
+    wadd(WT_DIV, 0, 248, 134, 986, 20, L"FULLSCREEN MONITOR TEST PATTERNS (CLICK TO LAUNCH)");
 
     static const wchar_t *pats[] = {
         L"Pure Black", L"Pure White", L"Pure Red", L"Pure Green", L"Pure Blue",
@@ -457,60 +530,68 @@ static void build_panel_tools(void)
         int col = i % 4;
         int row = i / 4;
         int x = 248 + col * 248;
-        int y = 184 + row * 62;
-        wadd(WT_BTN, ID_TEST_PAT_BASE + i, x, y, 234, 50, pats[i]);
+        int y = 160 + row * 58;
+        wadd(WT_BTN, ID_TEST_PAT_BASE + i, x, y, 234, 46, pats[i]);
     }
 
-    wadd(WT_DIV, 0, 248, 390, 986, 24, L"CRASH RESTORATION & BACKUP");
-    wadd(WT_PRIMARY, ID_B_BACKUP_NOW,      248, 424, 230, 44, L"Backup Display State");
-    wadd(WT_GHOST,   ID_B_RESTORE_BACKUP, 490, 424, 230, 44, L"Restore Last Good");
-    wadd(WT_ACCENT,  ID_B_RESET_ALL,      732, 424, 230, 44, L"Reset All Changes");
+    wadd(WT_DIV, 0, 248, 350, 986, 20, L"AUTOMATED TESTS & DIAGNOSTICS");
+    wadd(WT_GHOST, ID_B_DIAG_DISP_TEST,  248, 378, 230, 42, L"Run Display Test");
+    wadd(WT_GHOST, ID_B_DIAG_COLOR_TEST, 490, 378, 230, 42, L"Run Color Test");
+    wadd(WT_GHOST, ID_B_DIAG_HDR_TEST,   732, 378, 230, 42, L"Run HDR Test");
+    wadd(WT_GHOST, ID_B_DIAG_EXPORT,     974, 378, 260, 42, L"Export Diagnostics JSON");
 
-    wadd(WT_DIV, 0, 248, 498, 986, 24, L"SYSTEM DIAGNOSTICS");
-    wadd(WT_GHOST,   ID_B_DIAG_EXPORT,    248, 532, 230, 44, L"Export Diagnostics JSON");
+    wadd(WT_DIV, 0, 248, 444, 986, 20, L"CRASH RESTORATION & DISPLAY RECOVERY");
+    wadd(WT_PRIMARY, ID_B_BACKUP_NOW,      248, 474, 230, 44, L"Backup Display State");
+    wadd(WT_GHOST,   ID_B_RESTORE_BACKUP, 490, 474, 230, 44, L"Restore Last Good");
+    wadd(WT_ACCENT,  ID_B_RESET_ALL,      732, 474, 230, 44, L"Reset All Changes");
+
+    wadd(WT_DIV, 0, 248, 544, 986, 20, L"GAMING MODE");
+    Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 248, 574, 300, 42,
+                          Tools_IsGamingMode() ? L"★ Gaming Mode: ACTIVE" : L"☆ Gaming Mode: OFF");
+    gm_btn->flags = Tools_IsGamingMode() ? 1 : 0;
 }
 
 /* ---------------- 10. SETTINGS PANEL ---------------- */
 static void build_panel_settings(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 600, 36, L"Application Settings");
-    wadd(WT_LABEL, 0, 248, 118, 700, 20, L"Startup, hotkeys, LAN phone remote control, and privacy.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Application Settings");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Startup, hotkeys, LAN phone remote control, and privacy.");
 
-    wadd(WT_DIV, 0, 248, 150, 986, 24, L"STARTUP");
-    Widget *t1 = wadd(WT_TOGGLE, ID_T_STARTWIN, 248, 184, 400, 36, L"Start PlexusX with Windows");
+    wadd(WT_DIV, 0, 248, 134, 986, 20, L"STARTUP");
+    Widget *t1 = wadd(WT_TOGGLE, ID_T_STARTWIN, 248, 160, 400, 34, L"Start PlexusX with Windows");
     (void)t1;
 
-    Widget *t2 = wadd(WT_TOGGLE, ID_T_REDUCE_MOTION, 248, 230, 400, 36, L"Reduce Motion / Animations");
+    Widget *t2 = wadd(WT_TOGGLE, ID_T_REDUCE_MOTION, 248, 204, 400, 34, L"Reduce Motion / Animations");
     (void)t2;
 
-    wadd(WT_DIV, 0, 248, 286, 986, 24, L"LAN PHONE REMOTE CONTROL");
-    Widget *tp = wadd(WT_TOGGLE, ID_T_PHONE, 248, 320, 400, 36, L"LAN Phone Remote Server");
+    wadd(WT_DIV, 0, 248, 254, 986, 20, L"LAN PHONE REMOTE CONTROL");
+    Widget *tp = wadd(WT_TOGGLE, ID_T_PHONE, 248, 280, 400, 34, L"LAN Phone Remote Server");
     tp->state = Phone_IsRunning();
 
     if (Phone_IsRunning()) {
         wchar_t u[160];
         wsprintfW(u, L"URL: %s   ·   Pairing PIN: %04d   ·   Connected: %d",
                   Phone_SummaryUrl(), Phone_GetPin(), Phone_GetClientCount());
-        wadd(WT_LABEL, 0, 248, 366, 600, 24, u);
-        wadd(WT_GHOST, ID_B_PHONE_NEW_PIN, 860, 360, 180, 36, L"New PIN");
+        wadd(WT_LABEL, 0, 248, 324, 600, 20, u);
+        wadd(WT_GHOST, ID_B_PHONE_NEW_PIN, 860, 316, 180, 34, L"New PIN");
     } else {
-        wadd(WT_LABEL, 0, 248, 366, 700, 24, L"Server is OFF. Enable to control display colors from your smartphone on Wi-Fi.");
+        wadd(WT_LABEL, 0, 248, 324, 700, 20, L"Server is OFF. Enable to control display colors from your smartphone on Wi-Fi.");
     }
 
-    wadd(WT_DIV, 0, 248, 410, 986, 24, L"GLOBAL HOTKEYS");
-    wadd(WT_LABEL, 0, 248, 440, 986, 24,
+    wadd(WT_DIV, 0, 248, 366, 986, 20, L"GLOBAL HOTKEYS");
+    wadd(WT_LABEL, 0, 248, 392, 986, 20,
          L"Ctrl+Alt+↑: Saturation +10%   ·   Ctrl+Alt+↓: Saturation −10%   ·   Ctrl+Alt+0: Reset All");
-    wadd(WT_LABEL, 0, 248, 468, 986, 24,
-         L"Ctrl+Alt+X: Toggle Crosshair   ·   Ctrl+Alt+E: Toggle Color Engine On/Off");
+    wadd(WT_LABEL, 0, 248, 416, 986, 20,
+         L"Ctrl+Alt+X: Toggle Crosshair   ·   Ctrl+Alt+E: Toggle Color Engine On/Off   ·   Ctrl+Alt+G: Gaming Mode");
 
-    wadd(WT_DIV, 0, 248, 514, 986, 24, L"PRIVACY & LOCAL CONFIGURATION");
-    wadd(WT_LABEL, 0, 248, 544, 986, 44,
+    wadd(WT_DIV, 0, 248, 452, 986, 20, L"PRIVACY & LOCAL CONFIGURATION");
+    wadd(WT_LABEL, 0, 248, 478, 986, 36,
          L"100% Zero Telemetry Guarantee. No analytics, no accounts, no cloud calls. Configuration is saved locally.");
 
-    wadd(WT_GHOST, ID_B_OPEN_SETTINGS_DIR, 248, 598, 220, 40, L"Open App Data Folder");
+    wadd(WT_GHOST, ID_B_OPEN_SETTINGS_DIR, 248, 526, 220, 38, L"Open App Data Folder");
 
-    wadd(WT_DIV, 0, 248, 658, 986, 24, L"ABOUT PLEXUSX");
-    wadd(WT_LABEL, 0, 248, 688, 986, 40,
+    wadd(WT_DIV, 0, 248, 582, 986, 20, L"ABOUT PLEXUSX");
+    wadd(WT_LABEL, 0, 248, 608, 986, 36,
          L"PlexusX v" PX_VERSION L" · Built " PX_BUILD_DATE L" · Free & Open Source for Windows 10/11 x64\n"
          L"Legitimate Windows Magnification & Display APIs. Zero anti-cheat triggers.");
 }
@@ -564,27 +645,20 @@ static void draw_split_preview(HDC dc, RECT rc)
     (void)h;
     int split_x = rc.left + (int)(w * g_split_pos);
 
-    /* Left Side: SDR / Neutral Scene
-     * Right Side: Tuned with Active Look Parameters
-     */
-
-    /* Clip and draw Left Side */
+    /* Left Side: Neutral Scene */
     HRGN rgn_left = CreateRectRgn(rc.left, rc.top, split_x, rc.bottom);
     SelectClipRgn(dc, rgn_left);
 
-    /* Neutral Sky */
     HBRUSH sky_neutral = CreateSolidBrush(RGB(50, 70, 110));
     FillRect(dc, &rc, sky_neutral);
     DeleteObject(sky_neutral);
 
-    /* Neutral Sun */
     HBRUSH sun_neutral = CreateSolidBrush(RGB(220, 200, 150));
     HGDIOBJ osun = SelectObject(dc, sun_neutral);
     Ellipse(dc, rc.left + w / 4 - S(25), rc.top + S(30), rc.left + w / 4 + S(25), rc.top + S(80));
     SelectObject(dc, osun);
     DeleteObject(sun_neutral);
 
-    /* Neutral Mountains */
     POINT pts_m1[3] = { { rc.left, rc.bottom - S(50) }, { rc.left + w / 3, rc.top + S(60) }, { rc.left + (2 * w) / 3, rc.bottom - S(50) } };
     HBRUSH m_neutral = CreateSolidBrush(RGB(40, 50, 65));
     HGDIOBJ om = SelectObject(dc, m_neutral);
@@ -592,21 +666,18 @@ static void draw_split_preview(HDC dc, RECT rc)
     SelectObject(dc, om);
     DeleteObject(m_neutral);
 
-    /* Neutral Treeline */
     HBRUSH tree_neutral = CreateSolidBrush(RGB(35, 60, 45));
     RECT tr_rc = { rc.left, rc.bottom - S(70), rc.right, rc.bottom };
     FillRect(dc, &tr_rc, tree_neutral);
     DeleteObject(tree_neutral);
 
-    /* Left Label: BEFORE / NEUTRAL */
     RECT lbl_left = { rc.left + S(16), rc.top + S(16), rc.left + S(200), rc.top + S(40) };
     draw_text(dc, lbl_left, L"BEFORE (NEUTRAL)", g_fSmall, RGB(200, 200, 210), DT_LEFT);
 
-    /* Clip and draw Right Side (Tuned with active Look) */
+    /* Right Side: Tuned with Active Look Parameters */
     HRGN rgn_right = CreateRectRgn(split_x, rc.top, rc.right, rc.bottom);
     SelectClipRgn(dc, rgn_right);
 
-    /* Color modulation according to saturation, brightness, contrast, temp */
     float sat_mult = g_look.sat / 100.0f;
     float bri_mult = g_look.bri / 100.0f;
 
@@ -617,14 +688,12 @@ static void draw_split_preview(HDC dc, RECT rc)
     FillRect(dc, &rc, sky_tuned);
     DeleteObject(sky_tuned);
 
-    /* Tuned Sun */
     HBRUSH sun_tuned = CreateSolidBrush(RGB(255, 230, 120));
     osun = SelectObject(dc, sun_tuned);
     Ellipse(dc, rc.left + w / 4 - S(25), rc.top + S(30), rc.left + w / 4 + S(25), rc.top + S(80));
     SelectObject(dc, osun);
     DeleteObject(sun_tuned);
 
-    /* Tuned Mountains */
     POINT pts_m2[3] = { { rc.left, rc.bottom - S(50) }, { rc.left + w / 3, rc.top + S(60) }, { rc.left + (2 * w) / 3, rc.bottom - S(50) } };
     HBRUSH m_tuned = CreateSolidBrush(RGB((int)(30 * bri_mult), (int)(55 * bri_mult), (int)(90 * bri_mult)));
     om = SelectObject(dc, m_tuned);
@@ -632,17 +701,14 @@ static void draw_split_preview(HDC dc, RECT rc)
     SelectObject(dc, om);
     DeleteObject(m_tuned);
 
-    /* Tuned Vibrant Treeline */
     int tree_g = (int)clampi((int)(90 * bri_mult * sat_mult), 0, 255);
     HBRUSH tree_tuned = CreateSolidBrush(RGB(20, tree_g, 40));
     FillRect(dc, &tr_rc, tree_tuned);
     DeleteObject(tree_tuned);
 
-    /* Right Label: AFTER / TUNED */
     RECT lbl_right = { rc.right - S(180), rc.top + S(16), rc.right - S(16), rc.top + S(40) };
     draw_text(dc, lbl_right, L"AFTER (PLEXUSX)", g_fSmall, C_ACC, DT_RIGHT);
 
-    /* Reset Clipping */
     SelectClipRgn(dc, NULL);
     DeleteObject(rgn_left);
     DeleteObject(rgn_right);
@@ -655,7 +721,6 @@ static void draw_split_preview(HDC dc, RECT rc)
     SelectObject(dc, op);
     DeleteObject(pen_div);
 
-    /* Center Split Handle Circle */
     int hy = (rc.top + rc.bottom) / 2;
     HBRUSH br_handle = CreateSolidBrush(C_ACC);
     HGDIOBJ oh = SelectObject(dc, br_handle);
@@ -663,7 +728,6 @@ static void draw_split_preview(HDC dc, RECT rc)
     SelectObject(dc, oh);
     DeleteObject(br_handle);
 
-    /* Outer Border */
     HPEN pen_b = CreatePen(PS_SOLID, 1, C_LINE);
     op = SelectObject(dc, pen_b);
     SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -690,7 +754,6 @@ static void draw_curve_preview(HDC dc, RECT rc)
     SelectObject(dc, op);
     DeleteObject(pen_grid);
 
-    /* Draw Transfer Curve */
     WORD ramp[3][256];
     Eng_CalculateGammaRamp(&g_look, ramp);
 
@@ -771,11 +834,11 @@ static void draw_widget(HDC dc, Widget *k)
     }
     case WT_CARD: {
         draw_rrect(dc, rc, S(10), br_card, pen_line);
-        RECT r_head = { rc.left + S(16), rc.top + S(12), rc.right - S(16), rc.top + S(28) };
-        RECT r_val  = { rc.left + S(16), rc.top + S(30), rc.right - S(16), rc.top + S(64) };
-        RECT r_sub  = { rc.left + S(16), rc.bottom - S(26), rc.right - S(16), rc.bottom - S(8) };
+        RECT r_head = { rc.left + S(16), rc.top + S(10), rc.right - S(16), rc.top + S(26) };
+        RECT r_val  = { rc.left + S(16), rc.top + S(28), rc.right - S(16), rc.top + S(56) };
+        RECT r_sub  = { rc.left + S(16), rc.bottom - S(24), rc.right - S(16), rc.bottom - S(6) };
         draw_text(dc, r_head, k->text, g_fSmall, C_DIM, DT_LEFT);
-        draw_text(dc, r_val, k->val, g_fH1, C_TXT, DT_LEFT);
+        draw_text(dc, r_val, k->val, g_fH2, C_TXT, DT_LEFT);
         draw_text(dc, r_sub, k->sub, g_fSmall, C_SUB, DT_LEFT);
         break;
     }
@@ -783,10 +846,10 @@ static void draw_widget(HDC dc, Widget *k)
     case WT_LOOK_CARD:
     case WT_MONITOR_CARD: {
         HBRUSH fill = k->state ? br_card_act : (hov ? br_card2 : br_card);
-        draw_rrect(dc, rc, S(10), fill, k->state ? pen_acc : pen_line);
-        RECT r_title = { rc.left + S(16), rc.top + S(10), rc.right - S(16), rc.top + S(32) };
-        RECT r_sub   = { rc.left + S(16), rc.top + S(32), rc.right - S(16), rc.top + S(50) };
-        RECT r_val   = { rc.right - S(260), rc.top + S(10), rc.right - S(16), rc.top + S(32) };
+        draw_rrect(dc, rc, S(8), fill, k->state ? pen_acc : pen_line);
+        RECT r_title = { rc.left + S(14), rc.top + S(8), rc.right - S(14), rc.top + S(28) };
+        RECT r_sub   = { rc.left + S(14), rc.top + S(28), rc.right - S(14), rc.top + S(46) };
+        RECT r_val   = { rc.right - S(180), rc.top + S(8), rc.right - S(14), rc.top + S(28) };
         draw_text(dc, r_title, k->text, g_fH2, k->state ? C_ACC : C_TXT, DT_LEFT);
         draw_text(dc, r_sub, k->sub, g_fSmall, C_SUB, DT_LEFT);
         draw_text(dc, r_val, k->val, g_fSmall, C_ACC2, DT_RIGHT);
@@ -794,9 +857,9 @@ static void draw_widget(HDC dc, Widget *k)
     }
     case WT_ROW: {
         HBRUSH fill = k->state ? br_card_act : (hov ? br_card2 : br_card);
-        draw_rrect(dc, rc, S(8), fill, k->state ? pen_acc : pen_line);
-        RECT r1 = rc; r1.left += S(16); r1.right = rc.left + S(300);
-        RECT r2 = rc; r2.left = rc.right - S(200); r2.right -= S(16);
+        draw_rrect(dc, rc, S(6), fill, k->state ? pen_acc : pen_line);
+        RECT r1 = rc; r1.left += S(14); r1.right = rc.left + S(300);
+        RECT r2 = rc; r2.left = rc.right - S(200); r2.right -= S(14);
         draw_text(dc, r1, k->text, g_fBody, k->state ? C_ACC : C_TXT, DT_LEFT);
         draw_text(dc, r2, k->sub, g_fSmall, C_SUB, DT_RIGHT);
         break;
@@ -925,7 +988,6 @@ void Ui_Paint(HDC hdc, const RECT *rc)
         draw_rrect(hdc, box, S(8), acc, NULL);
         DeleteObject(acc);
 
-        /* Draw Geometric X mark */
         HPEN xp = CreatePen(PS_SOLID, S(3), C_DARK);
         HGDIOBJ op = SelectObject(hdc, xp);
         MoveToEx(hdc, S(25), S(21), NULL); LineTo(hdc, S(41), S(37));
@@ -1093,6 +1155,24 @@ int Ui_MouseDown(int x, int y)
                 Main_ApplyAll();
                 return 1;
             }
+            if (k->id >= ID_GAME_SUB_BASE && k->id < ID_GAME_SUB_BASE + MAX_SUB_MODES) {
+                int sub_idx = k->id - ID_GAME_SUB_BASE;
+                Prof_SelectSubMode(Prof_ActiveIndex(), sub_idx);
+                Ui_RebuildPanel();
+                return 1;
+            }
+            if (k->id >= ID_XH_PRESET_BASE && k->id < ID_XH_PRESET_BASE + 10) {
+                int p_idx = k->id - ID_XH_PRESET_BASE;
+                Xh_ApplyPreset(p_idx);
+                Ui_RebuildPanel();
+                return 1;
+            }
+            if (k->id >= ID_MONITOR_CARD_BASE && k->id < ID_MONITOR_CARD_BASE + 8) {
+                int m_idx = k->id - ID_MONITOR_CARD_BASE;
+                Modes_SetCurrentMonitor(m_idx);
+                Ui_RebuildPanel();
+                return 1;
+            }
             if (k->type == WT_LOOK_CARD) {
                 int count = 0;
                 const SceneDef *sc = Scene_GetList(&count);
@@ -1220,6 +1300,18 @@ int Ui_Exec(int id)
     case ID_CAP_CLOSE:
         PostMessageW(g_ui_hwnd, WM_CLOSE, 0, 0);
         return 1;
+    case ID_B_HOME_APPLY_GAME: {
+        Profile *gp = Prof_Get(Prof_ActiveIndex());
+        if (gp) {
+            Ui_LoadLook(&gp->sub[gp->active_sub].look);
+            wchar_t msg[128];
+            wsprintfW(msg, L"%s: %s profile applied", gp->name, gp->sub[gp->active_sub].name);
+            Ui_Notify(msg);
+            Ui_RebuildPanel();
+            Main_ApplyAll();
+        }
+        return 1;
+    }
     case ID_B_HOME_COMPETITIVE: {
         int cnt = 0;
         const SceneDef *sc = Scene_GetList(&cnt);
@@ -1271,6 +1363,57 @@ int Ui_Exec(int id)
         Ui_RebuildPanel();
         Main_ApplyAll();
         return 1;
+    case ID_B_SAVE_PRESET: {
+        Prof_AddCustom(L"My Custom Profile", L"", L"Custom Preset", Ui_Look());
+        Ui_Notify(L"Current configuration saved to custom presets");
+        Ui_RebuildPanel();
+        return 1;
+    }
+    case ID_B_COPY_PRESET: {
+        Profile *gp = Prof_Get(Prof_ActiveIndex());
+        if (gp) {
+            wchar_t copy_name[64];
+            wsprintfW(copy_name, L"%s Copy", gp->name);
+            Prof_AddCustom(copy_name, gp->exe, gp->tag, &gp->sub[gp->active_sub].look);
+            Ui_Notify(L"Profile duplicated to custom presets");
+            Ui_RebuildPanel();
+        }
+        return 1;
+    }
+    case ID_B_EXPORT_PRESET: {
+        Profile *gp = Prof_Get(Prof_ActiveIndex());
+        if (gp) {
+            wchar_t exp_path[MAX_PATH];
+            wsprintfW(exp_path, L"%s\\PlexusX_Export.json", g_appdata);
+            Prof_ExportJson(gp, exp_path);
+            Ui_Notify(L"Profile exported to JSON");
+        }
+        return 1;
+    }
+    case ID_B_IMPORT_PRESET: {
+        wchar_t imp_path[MAX_PATH];
+        wsprintfW(imp_path, L"%s\\import.json", g_appdata);
+        Profile imp;
+        if (Prof_ImportJson(&imp, imp_path) == 0) {
+            Prof_AddCustom(imp.name, imp.exe, imp.tag, &imp.sub[0].look);
+            Ui_Notify(L"Profile imported from JSON");
+            Ui_RebuildPanel();
+        } else {
+            Ui_Notify(L"Place import.json in AppData to import");
+        }
+        return 1;
+    }
+    case ID_B_CUSTOM_GAME_ADD: {
+        Prof_AddCustom(L"Custom Game", L"game.exe", L"Custom Shooter", Ui_Look());
+        Ui_Notify(L"New custom game profile created");
+        Ui_RebuildPanel();
+        return 1;
+    }
+    case ID_B_GAME_FAV_TOGGLE: {
+        Prof_ToggleFavorite(Prof_ActiveIndex());
+        Ui_RebuildPanel();
+        return 1;
+    }
     case ID_B_HOME_GAMING_MODE:
         Tools_ToggleGamingMode();
         Ui_RebuildPanel();
@@ -1290,8 +1433,63 @@ int Ui_Exec(int id)
         Ui_Notify(L"Reset to Native Mode");
         Ui_RebuildPanel();
         return 1;
+    case ID_B_MODE_43_COMP:
+        if (Modes_ApplyRes(1280, 960) == 0) Ui_Notify(L"4:3 1280x960 Applied");
+        else Ui_Notify(L"1280x960 not supported by display");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_MODE_43_STRETCH:
+        if (Modes_ApplyRes(1440, 1080) == 0) Ui_Notify(L"4:3 1440x1080 Stretched Applied");
+        else Ui_Notify(L"1440x1080 not supported by display");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_MODE_43_CLASSIC:
+        if (Modes_ApplyRes(1600, 1200) == 0) Ui_Notify(L"4:3 1600x1200 Applied");
+        else Ui_Notify(L"1600x1200 not supported by display");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_MODE_1610:
+        if (Modes_ApplyRes(1680, 1050) == 0 || Modes_ApplyRes(1920, 1200) == 0) Ui_Notify(L"16:10 Mode Applied");
+        else Ui_Notify(L"16:10 not supported by display");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_MODE_ULTRAWIDE:
+        if (Modes_ApplyRes(2560, 1080) == 0 || Modes_ApplyRes(3440, 1440) == 0) Ui_Notify(L"Ultrawide Mode Applied");
+        else Ui_Notify(L"Ultrawide not supported by display");
+        Ui_RebuildPanel();
+        return 1;
     case ID_B_MODE_OPENHDR:
         Modes_OpenHdrSettings();
+        return 1;
+    case ID_B_DELAY_0:
+        Prof_SetDelayMs(0);
+        Ui_Notify(L"Delay set to 0 ms");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_DELAY_500:
+        Prof_SetDelayMs(500);
+        Ui_Notify(L"Delay set to 500 ms");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_DELAY_1000:
+        Prof_SetDelayMs(1000);
+        Ui_Notify(L"Delay set to 1000 ms");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_DELAY_2000:
+        Prof_SetDelayMs(2000);
+        Ui_Notify(L"Delay set to 2000 ms");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_MONITOR_TARGET_ALL:
+        Eng_SetTargetMonitor(-1);
+        Ui_Notify(L"Targeting ALL Connected Displays");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_MONITOR_TARGET_SEL:
+        Eng_SetTargetMonitor(Modes_CurrentMonitorIndex());
+        Ui_Notify(L"Targeting Selected Display Only");
+        Ui_RebuildPanel();
         return 1;
     case ID_B_BACKUP_NOW:
         Eng_BackupCurrentState();
@@ -1314,6 +1512,15 @@ int Ui_Exec(int id)
         Ui_Notify(L"Diagnostics exported to app data folder");
         return 1;
     }
+    case ID_B_DIAG_DISP_TEST:
+        Tools_LaunchPattern(5); /* Gradient */
+        return 1;
+    case ID_B_DIAG_COLOR_TEST:
+        Tools_LaunchPattern(2); /* Red */
+        return 1;
+    case ID_B_DIAG_HDR_TEST:
+        Tools_LaunchPattern(10); /* HDR Peak */
+        return 1;
     case ID_B_IDENTIFY_MONITORS:
         Modes_IdentifyMonitors();
         return 1;

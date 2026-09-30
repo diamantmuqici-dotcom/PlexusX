@@ -73,9 +73,8 @@ It operates in the exact same legal space as the NVIDIA Control Panel, AMD Softw
 
 | Deliverable | Description | Size | SHA-256 Checksum |
 | :--- | :--- | :---: | :--- |
-| **`PlexusX.exe`** | Standalone Portable Executable | 306 KB | `39062a3a95619c4960a995cdabfe8fdc1dff7d2a70a506d49a50f5df57782e89` |
-| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 557 KB | `1096eaad9e914e68c8acaea490b1e6427a388ac46a0a712311592bee4e17a644` |
-| **`ChromaX.exe`** | Backwards-Compatible Alias | 306 KB | `39062a3a95619c4960a995cdabfe8fdc1dff7d2a70a506d49a50f5df57782e89` |
+| **`PlexusX.exe`** | Standalone Portable Executable | 317 KB | `70084c22a88456c3d8a51e7d675fbf49b26ec4468e25dbb3bedb311e2a6b577e` |
+| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 567 KB | `7c75c59e0c88a6fbd8ff6a68fd66951c3c6ba21170cf9ad97aac8c240485d148` |
 
 ### Verifying File Integrity
 
@@ -169,7 +168,6 @@ make clean && make
 This compiles:
 * `site/download/PlexusX.exe` (Main standalone portable GUI executable)
 * `site/download/PlexusX-Setup.exe` (Standalone Windows installer)
-* `site/download/ChromaX.exe` (Backwards-compatible copy)
 
 ### Running Automated Verification Tests
 ```bash

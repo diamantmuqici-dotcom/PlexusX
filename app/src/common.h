@@ -274,8 +274,31 @@ enum {
     ID_B_GAME_EDIT,
     ID_B_GAME_FAV_TOGGLE,
 
+    /* Stretched Mode Presets */
+    ID_B_MODE_43_COMP,
+    ID_B_MODE_43_STRETCH,
+    ID_B_MODE_43_CLASSIC,
+    ID_B_MODE_1610,
+    ID_B_MODE_ULTRAWIDE,
+
+    /* Automation Delays */
+    ID_B_DELAY_0,
+    ID_B_DELAY_500,
+    ID_B_DELAY_1000,
+    ID_B_DELAY_2000,
+
+    /* Monitor Targets */
+    ID_B_MONITOR_TARGET_ALL,
+    ID_B_MONITOR_TARGET_SEL,
+
+    /* Diagnostics Tests */
+    ID_B_DIAG_DISP_TEST,
+    ID_B_DIAG_COLOR_TEST,
+    ID_B_DIAG_HDR_TEST,
+
     /* Crosshair Shapes */
     ID_XH_SHAPE_BASE = 450,
+    ID_XH_PRESET_BASE = 470,     /* 470..485 */
 
     /* Games Cards & Rows */
     ID_GAME_CARD_BASE = 500,     /* 500..540 */
@@ -386,6 +409,7 @@ int         Modes_Current(ModeInfo *out);
 int         Modes_Apply(int idx);
 int         Modes_ApplyMaxHz(void);
 int         Modes_ApplyNative(void);
+int         Modes_ApplyRes(int target_w, int target_h);
 void        Modes_OpenHdrSettings(void);
 int         Modes_MonitorCount(void);
 MonitorInfo *Modes_GetMonitor(int i);

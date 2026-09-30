@@ -237,27 +237,90 @@ def render_games(out_path):
     draw = ImageDraw.Draw(img)
     draw_base_frame(draw, 1) # Games tab
 
-    draw.text((248, 80), "Game Profiles Library", fill=C_TXT, font=font_h1)
-    draw.text((248, 118), "Dedicated starting looks per game. Automatically switches when game launches.", fill=C_SUB, font=font_body)
+    draw.text((248, 70), "Game Profiles Library", fill=C_TXT, font=font_h1)
+    draw.text((248, 104), "Dedicated starting looks per game. Automatically switches when game launches.", fill=C_SUB, font=font_body)
+
+    # Left Column: Games library
+    draw.text((248, 130), "GAMES LIBRARY", fill=C_DIM, font=font_sm)
+    draw.line([360, 137, 688, 137], fill=C_CARD2, width=1)
 
     games = [
-        ("Rust", "RustClient.exe", "Survival FPS", "Competitive (11 modes)", True),
-        ("Counter-Strike 2", "cs2.exe", "Tactical Shooter", "Competitive (6 modes)", False),
-        ("Fortnite", "FortniteClient-Win64-Shipping.exe", "Battle Royale", "Colorful (6 modes)", False),
-        ("Valorant", "VALORANT-Win64-Shipping.exe", "Tactical Shooter", "High Contrast (4 modes)", False),
-        ("Escape From Tarkov", "EscapeFromTarkov.exe", "Hardcore Extraction", "Dark Room (5 modes)", False),
-        ("PUBG: BATTLEGROUNDS", "TslGame.exe", "Battle Royale", "Sunny (4 modes)", False),
-        ("Call of Duty: Warzone", "cod.exe", "FPS / Battle Royale", "Gulag Visibility (3 modes)", False)
+        ("Rust", "RustClient.exe", "Survival FPS", "★ Competitive (11)", True),
+        ("Counter-Strike 2", "cs2.exe", "Tactical Shooter", "★ Competitive (6)", False),
+        ("Fortnite", "FortniteClient.exe", "Battle Royale", "Colorful (6)", False),
+        ("Valorant", "VALORANT.exe", "Tactical Shooter", "High Contrast (4)", False),
+        ("Escape From Tarkov", "EscapeFromTarkov.exe", "Extraction", "Dark Room (5)", False),
+        ("PUBG: BATTLEGROUNDS", "TslGame.exe", "Battle Royale", "Sunny (4)", False),
+        ("Call of Duty: Warzone", "cod.exe", "FPS / Warzone", "Gulag Vis (3)", False),
+        ("Apex Legends", "r5apex.exe", "Hero Shooter", "World's Edge (3)", False)
     ]
 
     for i, (name, exe, tag, mode, active) in enumerate(games):
-        y = 160 + i * 72
+        y = 156 + i * 62
         fill = C_CARD_ACT if active else C_CARD
         outline = C_ACC if active else C_LINE
-        draw.rounded_rectangle([248, y, 1234, y + 60], radius=8, fill=fill, outline=outline)
-        draw.text((264, y + 10), name, fill=C_ACC if active else C_TXT, font=font_h2)
-        draw.text((264, y + 34), f"{exe}  ·  {tag}", fill=C_SUB, font=font_sm)
-        draw.text((980, y + 18), mode, fill=C_ACC2, font=font_body)
+        draw.rounded_rectangle([248, y, 688, y + 54], radius=8, fill=fill, outline=outline)
+        draw.text((264, y + 8), name, fill=C_ACC if active else C_TXT, font=font_h2)
+        draw.text((264, y + 30), f"{exe}  ·  {tag}", fill=C_SUB, font=font_sm)
+        draw.text((540, y + 10), mode, fill=C_ACC2, font=font_sm)
+
+    # Right Column: Inspector
+    draw.text((710, 130), "ACTIVE GAME INSPECTOR", fill=C_DIM, font=font_sm)
+    draw.line([880, 137, 1234, 137], fill=C_CARD2, width=1)
+
+    draw.rounded_rectangle([710, 156, 1234, 236], radius=10, fill=C_CARD, outline=C_LINE)
+    draw.text((726, 166), "SELECTED TITLE", fill=C_DIM, font=font_sm)
+    draw.text((726, 184), "Rust (Survival FPS)", fill=C_TXT, font=font_h2)
+    draw.text((726, 212), "Executable: RustClient.exe  ·  11 Available Sub-Modes", fill=C_SUB, font=font_sm)
+
+    draw.rounded_rectangle([1100, 166, 1220, 196], radius=6, fill=C_CARD2, outline=C_ACC)
+    draw.text((1118, 172), "★ Favorite", fill=C_ACC, font=font_sm)
+
+    # Sub-modes grid
+    draw.text((710, 246), "SELECTABLE VISUAL SUB-MODES", fill=C_DIM, font=font_sm)
+    draw.line([920, 253, 1234, 253], fill=C_CARD2, width=1)
+
+    rust_subs = [
+        "Competitive", "Forest", "Night",
+        "Snow", "Desert", "Daylight",
+        "Dark Room", "Bright", "Cinematic",
+        "Natural", "High Visibility", "Custom Tuned"
+    ]
+
+    for s, sub_name in enumerate(rust_subs):
+        col = s % 3
+        r = s // 3
+        bx = 710 + col * 176
+        by = 272 + r * 44
+        is_act = (s == 0)
+        fill = C_ACC if is_act else C_CARD
+        tc = C_DARK if is_act else C_TXT
+        outline = C_ACC if is_act else C_LINE
+        draw.rounded_rectangle([bx, by, bx + 168, by + 38], radius=6, fill=fill, outline=outline)
+        draw.text((bx + 16, by + 10), sub_name, fill=tc, font=font_sm)
+
+    # Active Sub-mode values summary
+    draw.rounded_rectangle([710, 460, 1234, 536], radius=10, fill=C_CARD, outline=C_LINE)
+    draw.text((726, 470), "TUNED PARAMETERS (COMPETITIVE)", fill=C_DIM, font=font_sm)
+    draw.text((726, 488), "Sat: 245%   Vib: 200%   Gamma: 0.94   Temp: 6400K", fill=C_TXT, font=font_h2)
+    draw.text((726, 514), "Shadows: 135%   Highlights: 90%   Clarity: 120%", fill=C_SUB, font=font_sm)
+
+    # Inspector action buttons
+    draw.rounded_rectangle([710, 550, 960, 592], radius=8, fill=C_ACC, outline=C_ACC)
+    draw.text((748, 560), "Apply This Profile", fill=C_DARK, font=font_h2)
+
+    draw.rounded_rectangle([970, 550, 1094, 592], radius=8, fill=C_CARD, outline=C_LINE)
+    draw.text((988, 560), "Export JSON", fill=C_TXT, font=font_sm)
+
+    draw.rounded_rectangle([1104, 550, 1234, 592], radius=8, fill=C_CARD, outline=C_LINE)
+    draw.text((1130, 560), "Duplicate", fill=C_TXT, font=font_sm)
+
+    # Bottom action buttons
+    draw.rounded_rectangle([248, 726, 468, 768], radius=8, fill=C_CARD, outline=C_LINE)
+    draw.text((276, 738), "+ Add Custom Game", fill=C_TXT, font=font_h2)
+
+    draw.rounded_rectangle([480, 726, 700, 768], radius=8, fill=C_CARD, outline=C_LINE)
+    draw.text((504, 738), "Import Profile JSON", fill=C_TXT, font=font_h2)
 
     img.save(out_path)
     print(f"Saved {out_path}")
