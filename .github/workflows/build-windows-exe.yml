@@ -2,11 +2,25 @@ name: build-windows-exe
 
 on:
   push:
-    branches: [main, "arena/**"]
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  test:
+    name: Core unit tests (native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & run core tests
+        run: cd app && make test
+
   build:
+    name: Build ChromaX.exe (x86_64-windows-gnu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,14 +32,61 @@ jobs:
       - name: Install zig toolchain
         run: pip install ziglang
 
-      - name: Build ChromaX.exe
-        run: cd app && make
+      - name: Build exe + publish to site/download
+        run: cd app && make site
 
       - name: Print SHA-256
-        run: sha256sum site/download/ChromaX.exe
+        run: cat site/download/SHA256SUMS.txt
 
-      - name: Upload exe
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ChromaX
-          path: site/download/ChromaX.exe
+          name: ChromaX-windows-x64
+          path: |
+            site/download/ChromaX.exe
+            site/download/SHA256SUMS.txt
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ChromaX-windows-x64
+          path: dist
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF#refs/tags/}"
+          cat > RELEASE_NOTES.md <<'EOF'
+          **ChromaX** — free monitor colour for Windows. One portable x64 exe, no installer, no admin, no account, no telemetry.
+
+          ## Verify the download
+          ```
+          certutil -hashfile ChromaX.exe SHA256
+          ```
+          Compare against `SHA256SUMS.txt` in this release (or the hash on the site's download card).
+
+          ## What it does
+          - Saturation to 300% plus vibrance, brightness, contrast, gamma, temperature, tint, RGB, shadows/highlights, black & white point, sharpness and clarity — through the Windows colour layer and GPU gamma ramps.
+          - Per-game looks that switch automatically (event-driven foreground detection).
+          - HDR where Windows and your driver expose it; "not supported" otherwise.
+          - Resolution & refresh manager with tested modes and rollback.
+          - Crosshair overlay (nine shapes), phone control over LAN with a random pairing token, backup & last-known-good restore.
+
+          What it never does: read game memory, edit game files, inject code, install drivers, or phone home.
+          EOF
+          gh release create "$VER" \
+            --title "ChromaX $VER" \
+            --notes-file RELEASE_NOTES.md \
+            --target "${GITHUB_SHA}" \
+            dist/ChromaX.exe dist/SHA256SUMS.txt

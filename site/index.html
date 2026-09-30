@@ -31,7 +31,7 @@
       <a href="#how">How it works</a>
       <a href="#faq">FAQ</a>
     </nav>
-    <a class="btn btn-sm btn-primary" href="#download">Download<span class="btn-sub">v1.0.0 · free</span></a>
+    <a class="btn btn-sm btn-primary" href="#download">Download<span class="btn-sub">v2.0.0 · free</span></a>
   </div>
 </header>
 
@@ -42,11 +42,12 @@
   <div class="hero-glow" aria-hidden="true"></div>
   <div class="hero-in">
     <div class="hero-copy">
-      <p class="eyebrow"><span class="pulse"></span>Windows 10 / 11 · v1.0.0 · <b>free forever</b></p>
+      <p class="eyebrow"><span class="pulse"></span>Windows 10 / 11 · v2.0.0 · <b>free forever</b></p>
       <h1>Three&nbsp;times<br>the colour.<br><span class="grad">Every game.</span></h1>
       <p class="lead">ChromaX changes what your <em>monitor</em> shows — never the game.
-        One 260&nbsp;KB portable exe: saturation to 300%, scene presets, per-game looks,
-        crosshair, resolution &amp; refresh, phone control.
+        One 397&nbsp;KB portable exe: saturation to 300%, a full colour engine, per-game looks
+        that switch themselves, HDR where Windows exposes it, crosshair, resolution &amp;
+        refresh, phone control.
         No account. No card. No premium tier. There is nothing to unlock, because it's all open.</p>
       <div class="hero-cta">
         <a class="btn btn-primary btn-lg" href="#download">
@@ -55,7 +56,7 @@
         <a class="btn btn-ghost btn-lg" href="#difference">See the difference</a>
       </div>
       <ul class="chips">
-        <li>260 KB portable exe</li>
+        <li>397 KB portable exe</li>
         <li>SHA-256 published</li>
         <li>Open source · Apache-2.0</li>
         <li>No admin, no installer</li>
@@ -87,12 +88,14 @@
 <!-- ══════════ MARQUEE ══════════ -->
 <div class="marquee" aria-hidden="true">
   <div class="marquee-track">
-    <span>300% saturation</span><i>✦</i><span>scene presets</span><i>✦</i><span>per-game auto-switch</span><i>✦</i>
-    <span>crosshair designer</span><i>✦</i><span>resolution &amp; refresh</span><i>✦</i><span>phone control</span><i>✦</i>
-    <span>hotkeys</span><i>✦</i><span>crash restore</span><i>✦</i><span>zero accounts</span><i>✦</i>
-    <span>300% saturation</span><i>✦</i><span>scene presets</span><i>✦</i><span>per-game auto-switch</span><i>✦</i>
-    <span>crosshair designer</span><i>✦</i><span>resolution &amp; refresh</span><i>✦</i><span>phone control</span><i>✦</i>
-    <span>hotkeys</span><i>✦</i><span>crash restore</span><i>✦</i><span>zero accounts</span><i>✦</i>
+    <span>300% saturation</span><i>✦</i><span>full colour engine</span><i>✦</i><span>per-game auto-switch</span><i>✦</i>
+    <span>HDR where supported</span><i>✦</i><span>crosshair · 9 shapes</span><i>✦</i><span>resolution &amp; refresh</span><i>✦</i>
+    <span>per-monitor control</span><i>✦</i><span>backup &amp; last-known-good</span><i>✦</i><span>phone control</span><i>✦</i>
+    <span>hotkeys</span><i>✦</i><span>zero accounts</span><i>✦</i><span>no telemetry</span><i>✦</i>
+    <span>300% saturation</span><i>✦</i><span>full colour engine</span><i>✦</i><span>per-game auto-switch</span><i>✦</i>
+    <span>HDR where supported</span><i>✦</i><span>crosshair · 9 shapes</span><i>✦</i><span>resolution &amp; refresh</span><i>✦</i>
+    <span>per-monitor control</span><i>✦</i><span>backup &amp; last-known-good</span><i>✦</i><span>phone control</span><i>✦</i>
+    <span>hotkeys</span><i>✦</i><span>zero accounts</span><i>✦</i><span>no telemetry</span><i>✦</i>
   </div>
 </div>
 
@@ -119,7 +122,7 @@
       <article class="qcard reveal">
         <div class="qico qico-euro">€</div>
         <h3>Is it really free?</h3>
-        <p>All of it. Saturation, scenes, per-game switching, crosshair, modes, phone control —
+        <p>All of it. Saturation, HDR, per-game switching, looks, crosshair, modes, backups, phone control —
           every feature is in the free binary. No account, no trial, no “pro” upsell hiding
           behind a padlock.</p>
         <a href="#features" class="alink">See all features →</a>
@@ -192,7 +195,7 @@
     <p class="eyebrow reveal">BUILT FOR YOUR GAME</p>
     <h2 class="reveal">Click a game. Watch it change.</h2>
     <p class="section-lead reveal">Every popular shooter and survival game ships with a tuned starting point —
-      saturation, contrast, temperature, gamma. Tweak it live, copy the code, paste it in the app.
+      saturation, contrast, temperature, gamma. Tweak it live, copy the JSON, import it in the app.
       In the app, profiles switch themselves the moment the game opens.</p>
 
     <div class="gallery reveal">
@@ -241,13 +244,13 @@
             </div>
           </div>
           <div class="stage-actions">
-            <code class="preset-code mono" id="stCode">CHX-RUST-250-06-14-04</code>
-            <button class="btn btn-primary btn-sm" id="stCopy">Copy preset code</button>
+            <code class="preset-code mono" id="stCode">…</code>
+            <button class="btn btn-primary btn-sm" id="stCopy">Copy as JSON preset</button>
           </div>
         </div>
       </div>
     </div>
-    <p class="fineprint reveal">Preset codes are just text — share them, they're free like everything else.
+    <p class="fineprint reveal">Presets are plain JSON — copy them, share them, import them in the app. Free like everything else.
       Game names belong to their publishers; we only mean “works with”.</p>
   </div>
 </section>
@@ -268,11 +271,11 @@
       </div>
       <div class="mock-body">
         <aside class="mock-side" id="mockSide">
-          <button class="mock-side-item active" data-tab="display">Display</button>
-          <button class="mock-side-item" data-tab="games">Game looks</button>
-          <button class="mock-side-item" data-tab="scenes">Scenes</button>
+          <button class="mock-side-item active" data-tab="display">Color</button>
+          <button class="mock-side-item" data-tab="games">Games</button>
+          <button class="mock-side-item" data-tab="scenes">Looks</button>
           <button class="mock-side-item" data-tab="cross">Crosshair</button>
-          <button class="mock-side-item" data-tab="modes">Modes</button>
+          <button class="mock-side-item" data-tab="modes">Display</button>
           <button class="mock-side-item" data-tab="settings">Settings</button>
           <div class="mock-free">
             <b>FREE FOREVER</b>
@@ -285,8 +288,8 @@
           <div class="mock-tab active" data-tab="display">
             <div class="mock-head">
               <div>
-                <h3>Display</h3>
-                <p>Your whole-screen look. Free — no account, no card.</p>
+                <h3>Color</h3>
+                <p>Your whole-screen look, per monitor. Free — no account, no card.</p>
               </div>
               <div class="mock-readout"><b id="mockSatOut">230%</b><span>saturation · free</span></div>
             </div>
@@ -294,6 +297,8 @@
             <div class="mock-grid">
               <label class="mock-slider"><span>Saturation</span>
                 <input class="range" type="range" min="100" max="300" value="230" id="mockSat"><output class="mono">230%</output></label>
+              <label class="mock-slider"><span>Vibrance</span>
+                <input class="range" type="range" min="0" max="300" value="100"><output class="mono">100%</output></label>
               <label class="mock-slider"><span>GPU gamma</span>
                 <input class="range" type="range" min="60" max="240" value="100"><output class="mono">1.00</output></label>
               <label class="mock-slider"><span>Brightness</span>
@@ -311,7 +316,7 @@
 
           <!-- GAMES -->
           <div class="mock-tab" data-tab="games">
-            <div class="mock-head"><div><h3>Game looks</h3><p>One look per game. Switches itself when the game opens.</p></div></div>
+            <div class="mock-head"><div><h3>Games</h3><p>One look per game. Switches itself the moment the game opens — event-driven, no polling.</p></div></div>
             <div class="mock-toggle-row"><span>Switch automatically</span><button class="sw on" aria-pressed="true"><i></i></button></div>
             <p class="mock-div">SAVED LOOKS</p>
             <div class="mock-row sel"><span class="dot"></span>Desktop · always</div>
@@ -325,16 +330,16 @@
 
           <!-- SCENES -->
           <div class="mock-tab" data-tab="scenes">
-            <div class="mock-head"><div><h3>Scenes</h3><p>One-click looks for the situations where colour actually wins.</p></div></div>
+            <div class="mock-head"><div><h3>Looks</h3><p>One-click starting points — the same looks that ship in the app.</p></div></div>
             <div class="scene-chips" id="mockScenes">
-              <button class="chip" data-sat="130">Default</button>
-              <button class="chip" data-sat="255">Treeline</button>
-              <button class="chip" data-sat="235">Night Ops</button>
-              <button class="chip" data-sat="190">Snow Glare</button>
-              <button class="chip" data-sat="275">Smoke &amp; Dust</button>
-              <button class="chip" data-sat="225">Dark Room</button>
-              <button class="chip" data-sat="200">Bright Sky</button>
-              <button class="chip" data-sat="250">Long Range</button>
+              <button class="chip" data-sat="100">Default</button>
+              <button class="chip" data-sat="165">Competitive</button>
+              <button class="chip" data-sat="240">Vibrant</button>
+              <button class="chip" data-sat="150">Cinematic</button>
+              <button class="chip" data-sat="120">Night</button>
+              <button class="chip" data-sat="190">Forest</button>
+              <button class="chip" data-sat="140">Snow</button>
+              <button class="chip" data-sat="180">High Contrast</button>
             </div>
             <p class="mock-hint">Click a scene — the Display tab follows it, exactly like the real app.</p>
           </div>
@@ -352,19 +357,22 @@
               <button class="shape" data-shape="dot">Dot</button>
               <button class="shape" data-shape="both">Cross+dot</button>
               <button class="shape" data-shape="circle">Circle</button>
+              <button class="shape" data-shape="square">Square</button>
+              <button class="shape" data-shape="t">T</button>
               <button class="shape" data-shape="chevron">Chevron</button>
+              <button class="shape" data-shape="fours">Four dot</button>
             </div>
           </div>
 
           <!-- MODES -->
           <div class="mock-tab" data-tab="modes">
-            <div class="mock-head"><div><h3>Resolution &amp; refresh</h3><p>Modes, refresh rate and stretched 4:3 — same tab as your colours.</p></div></div>
+            <div class="mock-head"><div><h3>Display</h3><p>Per-monitor resolution, refresh, stretched 4:3, and the real HDR switch — tested before applied, rolled back on failure.</p></div></div>
             <div class="mock-mode-now mono">Now: 1920×1080 @ 144 Hz (native)</div>
             <div class="mock-row">2560×1440 @ 165 Hz · 16:9</div>
             <div class="mock-row sel"><span class="dot"></span>1440×1080 @ 144 Hz · 4:3 stretched</div>
             <div class="mock-row">1280×960 @ 144 Hz · 4:3 stretched</div>
             <div class="mock-row">1920×1080 @ 240 Hz · 16:9</div>
-            <div class="mock-btns"><button class="mbtn primary">Apply mode</button><button class="mbtn">Back to native</button><button class="mbtn">HDR — open Windows settings</button></div>
+            <div class="mock-btns"><button class="mbtn primary">Apply mode</button><button class="mbtn">Back to native</button><button class="mbtn">HDR toggle — where supported</button></div>
             <p class="mock-hint">Windows asks you to keep a new mode — or it reverts, same as Settings.</p>
           </div>
 
@@ -375,8 +383,8 @@
             <div class="mock-toggle-row"><span>Phone panel on this Wi-Fi</span><button class="sw on" aria-pressed="true"><i></i></button></div>
             <div class="mock-url mono">http://192.168.1.24:8777 <button class="mbtn tiny" id="copyUrl">Copy link</button></div>
             <p class="mock-div">ABOUT</p>
-            <p class="mock-about">ChromaX v1.0.0 · Windows 10/11 · single portable exe · no installer, no admin.<br>
-              No account, no telemetry, no phone-home. Settings live in a plain <code>config.ini</code>.<br>
+            <p class="mock-about">ChromaX v2.0.0 · Windows 10/11 · single portable exe · no installer, no admin.<br>
+              No account, no telemetry, no phone-home. Settings live in a plain <code>config.json</code>; backups and a last-known-good snapshot restore your display after a crash.<br>
               What it never does: read game memory · edit game files · inject code · install a driver.</p>
           </div>
 
@@ -397,16 +405,16 @@
     <div class="feat-grid">
       <article class="feat reveal"><span class="fico">◐</span><h3>Saturation to 300%</h3><p>100 means untouched, 300 means three times the colour — on your whole screen, at once.</p></article>
       <article class="feat reveal"><span class="fico">◑</span><h3>Any-GPU vibrance</h3><p>NVIDIA, AMD or Intel — the saturation engine doesn't care who makes your card, and there's headroom past NVIDIA's own slider.</p></article>
-      <article class="feat reveal"><span class="fico">▦</span><h3>Eight scene presets</h3><p>Treeline, Night Ops, Snow Glare, Smoke &amp; Dust, Dark Room, Bright Sky, Long Range, Default. One click each.</p></article>
-      <article class="feat reveal"><span class="fico">♻</span><h3>Per-game auto-switch</h3><p>Watches which program is in front — the same list Task Manager shows — and swaps your look by itself.</p></article>
-      <article class="feat reveal"><span class="fico">✛</span><h3>Crosshair designer</h3><p>Cross, dot, circle, chevron, T — size, gap, thickness, colours, outline. Drawn above the screen, off until you turn it on.</p></article>
+      <article class="feat reveal"><span class="fico">▦</span><h3>Looks &amp; scene presets</h3><p>18 named looks — Competitive, Vibrant, Cinematic, Night, Snow, OLED… — plus procedural preview scenes, and JSON presets you can import and export.</p></article>
+      <article class="feat reveal"><span class="fico">♻</span><h3>Per-game auto-switch</h3><p>Windows pushes a foreground event the moment the front window changes — no polling, no re-apply loops — and your look follows. 20+ games ship with tuned starting points.</p></article>
+      <article class="feat reveal"><span class="fico">✛</span><h3>Crosshair designer</h3><p>Nine shapes — cross, dot, circle, square, plus, chevron, T, T-type, four-dot — with size, gap, thickness, rotation, outline, per-monitor placement and a saved library.</p></article>
       <article class="feat reveal"><span class="fico">▣</span><h3>Resolution &amp; refresh</h3><p>Switch modes, refresh rates and stretched 4:3 presets in the same tab as your colours. Windows confirms every change.</p></article>
-      <article class="feat reveal"><span class="fico">☀</span><h3>HDR jump</h3><p>One button opens Windows' own HDR switch — we don't fight the OS on advanced colour, we hand it over.</p></article>
+      <article class="feat reveal"><span class="fico">☀</span><h3>HDR, where it exists</h3><p>The real Windows HDR switch inside the app, with the SDR white level next to it — and an honest “not supported” when your driver doesn't expose it. No faked state, ever.</p></article>
       <article class="feat reveal"><span class="fico">▯</span><h3>Phone control</h3><p>Same Wi-Fi, browser on your phone, sliders on your monitor. On only while you keep it on — off means port closed.</p></article>
       <article class="feat reveal"><span class="fico">⌨</span><h3>Hotkeys everywhere</h3><p>Ctrl+Alt+arrows for saturation, 0 to reset, X for crosshair, E for the whole look. Works over any game.</p></article>
-      <article class="feat reveal"><span class="fico">◫</span><h3>Per-monitor gamma</h3><p>GPU gamma ramps on every display your PC drives — the colour filter rides on top of them.</p></article>
-      <article class="feat reveal"><span class="fico">⟲</span><h3>Crash restore</h3><p>Your original gamma is written to disk before anything changes. Kill the app in Task Manager and the screen still comes back.</p></article>
-      <article class="feat reveal"><span class="fico">⌘</span><h3>Portable &amp; quiet</h3><p>One file, no installer, no admin, no telemetry, no account. Config is a readable <code>config.ini</code> you can delete.</p></article>
+      <article class="feat reveal"><span class="fico">◫</span><h3>Per-monitor everything</h3><p>Every control targets the monitor you pick — or all of them. Displays are matched by hardware identity, so a rearranged dock can't swap your looks around.</p></article>
+      <article class="feat reveal"><span class="fico">⟲</span><h3>Backup &amp; last-known-good</h3><p>One click snapshots your whole setup. If a change ever makes things worse, the last known-good state restores automatically — and originals come back on a crash.</p></article>
+      <article class="feat reveal"><span class="fico">⌘</span><h3>Portable &amp; quiet</h3><p>One file, no installer, no admin, no telemetry, no account. Config is a readable <code>config.json</code> you can delete.</p></article>
     </div>
   </div>
 </section>
@@ -435,8 +443,9 @@
       <article class="how-card reveal">
         <span class="how-num mono">03</span>
         <h3>The foreground watch</h3>
-        <p>Per-game switching reads the process in front — the same list Task Manager shows — and
-          listens for window changes. It never opens, reads or touches the game itself.</p>
+        <p>Per-game switching listens on a Windows event hook: the moment the front window changes,
+          the OS tells us, we check the name, we swap the look. No timer, no polling, no churn —
+          and it never opens, reads or touches the game itself.</p>
       </article>
     </div>
 
@@ -483,12 +492,12 @@
         <a class="btn btn-primary btn-lg" href="download/ChromaX.exe" download="ChromaX.exe">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
           Download ChromaX.exe</a>
-        <p class="dl-meta">Windows 10 / 11 · x64 · 260 KB · v1.0.0 · Apache-2.0</p>
+        <p class="dl-meta">Windows 10 / 11 · x64 · 397 KB · v2.0.0 · Apache-2.0</p>
       </div>
       <div class="dl-right">
         <div class="hash-card">
           <p class="hash-label">SHA-256 — the exact file above</p>
-          <code class="hash mono" id="sha">30edc97247d31e162d4936c0ced4408ec9b6f7a46519c86e1c7f3db43ba2936f</code>
+          <code class="hash mono" id="sha">0c8ebbd689fcd2b326caf1fecc27431e01aad9408ef1c15bba9df8820045217c</code>
           <button class="btn btn-ghost btn-sm" id="copySha">Copy hash</button>
           <p class="hash-note">Verify it yourself before running — open <b>Downloads</b> in Explorer,
             type <code>cmd</code> in the address bar, Enter, then:</p>
@@ -509,6 +518,23 @@
     <h2 class="reveal">Dated, in plain words.</h2>
 
     <div class="log reveal">
+      <div class="log-item">
+        <div class="log-meta"><b>v2.0.0</b><span>30 Sep 2026</span></div>
+        <div class="log-body">
+          <h3>The full rebuild</h3>
+          <ul>
+            <li>Full colour engine: saturation to 300% plus vibrance, brightness, contrast, gamma, temperature, tint, RGB correction, shadows &amp; highlights, black level, white point, sharpness and clarity.</li>
+            <li>Ten-page interface: Home dashboard, Games, Display, Color, Presets, Crosshair, Monitors, Automation, Tools, Settings.</li>
+            <li>HDR as a real in-app toggle where Windows and your driver expose it, with the SDR white level read out — “not supported” shown honestly where they don't.</li>
+            <li>Per-monitor targeting for every control; displays are matched by hardware identity, not slot number.</li>
+            <li>Event-driven foreground detection (Windows event hooks) — no polling, no re-apply loops.</li>
+            <li>Backup &amp; restore with a last-known-good snapshot and crash recovery.</li>
+            <li>JSON preset import/export with validation; 18 built-in looks; 20+ game profiles.</li>
+            <li>Crosshair grows to nine shapes with rotation and per-monitor placement.</li>
+            <li>Phone control now pairs with a random token; diagnostics page with test patterns.</li>
+          </ul>
+        </div>
+      </div>
       <div class="log-item">
         <div class="log-meta"><b>v1.0.0</b><span>30 Sep 2026</span></div>
         <div class="log-body">
@@ -555,7 +581,9 @@
         <summary>Does it work with my graphics card?</summary>
         <div><p>Yes: NVIDIA, AMD and Intel. The saturation, brightness, contrast and temperature run
           on a Windows colour layer that doesn't care about your GPU vendor. Gamma runs through the
-          standard Windows gamma-ramp call on every display.</p></div>
+          standard Windows gamma-ramp call on every display. HDR appears as a real on/off control
+          only when Windows and your driver expose it — otherwise the app says “not supported”
+          instead of showing a dead slider.</p></div>
       </details>
       <details>
         <summary>What's the catch — what's paid?</summary>

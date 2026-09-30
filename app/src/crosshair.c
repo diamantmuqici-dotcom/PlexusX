@@ -1,267 +1,321 @@
-/* crosshair.c — click-through layered overlay drawn above everything */
+/* crosshair.c \u2014 desktop crosshair overlay
+ *
+ * A real, legitimate tool: a transparent, click-through, topmost layered
+ * window on the desktop (the same technique every legal crosshair utility
+ * uses).  It draws 9 original vector shapes, honours per-monitor placement
+ * and whole-overlay opacity, and is never injected into any process.
+ */
 #include "common.h"
 
-static XhCfg   g_xh = { 0, XH_CROSS, 16, 4, 2, 100, 1, RGB(0x7C,0xFF,0x40), RGB(0,0,0) };
-static HWND    g_xh_wnd;
-static int     g_xh_shown;
+static HWND g_xhwnd;
+static XhCfg g_cfg;
+static HBITMAP g_bmp;
 
-/* ---- draw shape at supersample S into a top-down 32bpp DIB ---- */
-static void draw_shape(BYTE *bits, int W, int H, const XhCfg *c, int S)
+static struct XhDraw {
+    uint32_t *px;
+    int w, h, cx, cy;
+    int s, g, t;         /* size, gap, thick */
+    DWORD fc, oc;        /* fill / outline colour (premultiplied by opacity) */
+    int outline;
+} D;
+
+static void putpx(int x, int y, DWORD c)
 {
-    HDC dc = CreateCompatibleDC(NULL);
-    BITMAPINFO bi;
+    if (x >= 0 && y >= 0 && x < D.w && y < D.h && c)
+        D.px[y * D.w + x] = c;
+}
+
+static void draw_cross(void)
+{
+    for (int pass = 0; pass < 2; pass++) {
+        int th = pass ? D.t : (D.outline ? D.t + 2 : 0);
+        if (!th) continue;
+        DWORD col = pass ? D.fc : D.oc;
+        int hh = th / 2, ext = D.s + D.g + hh;
+        for (int yy = D.cy - hh; yy < D.cy + th; yy++)
+            for (int xx = D.cx - ext; xx < D.cx + ext; xx++)
+                if (xx < D.cx - D.g - hh || xx >= D.cx + D.g + hh) putpx(xx, yy, col);
+        for (int xx = D.cx - hh; xx < D.cx + th; xx++)
+            for (int yy = D.cy - ext; yy < D.cy + ext; yy++)
+                if (yy < D.cy - D.g - hh || yy >= D.cy + D.g + hh) putpx(xx, yy, col);
+    }
+}
+
+static void draw_dot(void)
+{
+    int r = D.s / 2;
+    for (int y = -r; y <= r; y++)
+        for (int x = -r; x <= r; x++)
+            if (x * x + y * y <= r * r) {
+                int edge = D.outline && (x * x + y * y > (r - 1) * (r - 1));
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+}
+
+static void draw_ring(void)
+{
+    int r = D.s, ri = D.s - D.t;
+    for (int y = -r - 2; y <= r + 2; y++)
+        for (int x = -r - 2; x <= r + 2; x++) {
+            int d2 = x * x + y * y;
+            int outer = (r + (D.outline ? 1 : 0));
+            if (d2 <= outer * outer && d2 >= ri * ri) {
+                int edge = D.outline && (d2 > r * r);
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+        }
+}
+
+static void draw_square(void)
+{
+    int s = D.s;
+    for (int y = -s; y <= s; y++)
+        for (int x = -s; x <= s; x++) {
+            int ax = abs(x), ay = abs(y);
+            int o = s - 1, i = s - D.t;
+            if (ax <= o + 1 && ay <= o + 1 &&
+                (ax == o || ay == o || ax == i || ay == i)) {
+                int edge = D.outline && (ax == o + 1 || ay == o + 1);
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+        }
+}
+
+static void draw_plus(void)
+{
+    int arm = D.t / 2 + 1;
+    for (int y = -D.s; y <= D.s; y++)
+        for (int x = -D.s; x <= D.s; x++) {
+            if ((abs(y) < arm && abs(x) <= D.s) || (abs(x) < arm && abs(y) <= D.s)) {
+                int edge = D.outline && ((abs(y) == arm - 1) || (abs(x) == arm - 1));
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+        }
+}
+
+static void draw_chevron(void)
+{
+    float ang = (float)g_cfg.rotation * 3.14159265f / 180.f;
+    float ca = cosf(ang), sa = sinf(ang);
+    for (int y = -D.s - 2; y <= D.s + 2; y++)
+        for (int x = -D.s - 2; x <= D.s + 2; x++) {
+            float rx = x * ca - y * sa;
+            float ry = x * sa + y * ca;
+            float v = fabsf(rx) / (float)D.s + (float)D.s - ry;
+            if (v < (float)D.t && ry < D.s - 1 && ry > -D.s) {
+                int edge = D.outline && (v > (float)D.t - 2.f);
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+        }
+}
+
+static void draw_T(void)
+{
+    int arm = D.t / 2 + 1;
+    for (int y = -D.s; y <= D.s; y++)
+        for (int x = -D.s; x <= D.s; x++) {
+            int top = (y >= -D.s && y <= -D.s + D.t);
+            int stem = (abs(x) < arm && y > -D.s + D.t);
+            if (top || stem) {
+                int edge = D.outline && ((y == -D.s) || (stem && abs(x) == arm - 1));
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+        }
+}
+
+static void draw_Ttype(void)
+{
+    int arm = D.t / 2 + 1;
+    for (int y = -D.s; y <= D.s; y++)
+        for (int x = -D.s; x <= D.s; x++) {
+            int bot = (y >= D.s - D.t && y <= D.s);
+            int stem = (abs(x) < arm && y < D.s - D.t);
+            if (bot || stem) {
+                int edge = D.outline && ((y == D.s) || (stem && abs(x) == arm - 1));
+                putpx(D.cx + x, D.cy + y, edge ? D.oc : D.fc);
+            }
+        }
+}
+
+static void draw_fourdot(void)
+{
+    int r = (D.t + 2) / 2, d = D.s + D.g;
+    int pts[4][2] = { { -d, 0 }, { d, 0 }, { 0, -d }, { 0, d } };
+    for (int i = 0; i < 4; i++)
+        for (int y = -r; y <= r; y++)
+            for (int x = -r; x <= r; x++)
+                if (x * x + y * y <= r * r) {
+                    int edge = D.outline && (x * x + y * y > (r - 1) * (r - 1));
+                    putpx(D.cx + pts[i][0] + x, D.cy + pts[i][1] + y, edge ? D.oc : D.fc);
+                }
+}
+
+static HBITMAP build_bitmap(int w, int h)
+{
+    HDC screen = GetDC(NULL);
+    HDC dc = CreateCompatibleDC(screen);
+    BITMAPV5HEADER bi;
     memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = W;
-    bi.bmiHeader.biHeight = -H;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void *pb = NULL;
-    HBITMAP bmp = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &pb, NULL, 0);
-    if (!bmp || !pb) { if (bmp) DeleteObject(bmp); CloseHandle(dc); return; }
-    memset(pb, 0, (size_t)W * H * 4);
-    SelectObject(dc, bmp);
+    bi.bV5Size = sizeof bi;
+    bi.bV5Width = w;
+    bi.bV5Height = -h;              /* top-down */
+    bi.bV5Planes = 1;
+    bi.bV5BitCount = 32;
+    bi.bV5Compression = BI_BITFIELDS;
+    bi.bV5RedMask = 0x00FF0000;
+    bi.bV5GreenMask = 0x0000FF00;
+    bi.bV5BlueMask = 0x000000FF;
+    void *bits = NULL;
+    HBITMAP bmp = CreateDIBSection(screen, (BITMAPINFO *)&bi, DIB_RGB_COLORS,
+                                   &bits, NULL, 0);
+    if (!bmp || !bits) {
+        if (bmp) DeleteObject(bmp);
+        DeleteDC(dc);
+        ReleaseDC(NULL, screen);
+        return NULL;
+    }
+    memset(bits, 0, (size_t)w * h * 4);
+    HBITMAP old = (HBITMAP)SelectObject(dc, bmp);
 
-    int cx = W / 2, cy = H / 2;
-    int arm  = c->size * S;
-    int gap  = c->gap * S;
-    int th   = c->thick * S;
-    int out  = c->outline ? (2 * S) : 0;
+    int a = (int)(g_cfg.opacity * 255 / 100);
+    D.px = (uint32_t *)bits;
+    D.w = w; D.h = h;
+    D.cx = w / 2; D.cy = h / 2;
+    D.s = g_cfg.size; D.g = g_cfg.gap; D.t = g_cfg.thick;
+    D.fc = (a << 24) | (GetRValue(g_cfg.color) << 16) | (GetGValue(g_cfg.color) << 8) | GetBValue(g_cfg.color);
+    D.oc = (a << 24) | (GetRValue(g_cfg.ocolor) << 16) | (GetGValue(g_cfg.ocolor) << 8) | GetBValue(g_cfg.ocolor);
+    D.outline = g_cfg.outline;
 
-    HPEN penO = CreatePen(PS_SOLID | PS_ENDCAP_SQUARE, th + out * 2, g_xh.ocolor);
-    HPEN penF = CreatePen(PS_SOLID | PS_ENDCAP_SQUARE, th, g_xh.color);
-    HBRUSH brF = CreateSolidBrush(g_xh.color);
-    HBRUSH brNull = (HBRUSH)GetStockObject(NULL_BRUSH);
-    HGDIOBJ oldPen = SelectObject(dc, penO), oldBr = SelectObject(dc, brNull);
-
-    int dot_r = (th + out) ;           /* dot radius before scale */
-    int need_dot = (c->shape == XH_DOT);
-    int need_shape = !need_dot;
-
-#define OUTLINE_ON()  SelectObject(dc, penO); SelectObject(dc, brNull)
-#define FILL_ON()     SelectObject(dc, penF); SelectObject(dc, brNull)
-
-    if (need_shape) {
-        /* pass 1 — outline strokes */
-        if (c->outline) {
-            switch (c->shape) {
-            case XH_CROSS:
-                MoveToEx(dc, cx - gap - arm, cy, NULL); LineTo(dc, cx + gap + arm, cy);
-                MoveToEx(dc, cx, cy - gap - arm, NULL); LineTo(dc, cx, cy + gap + arm);
-                break;
-            case XH_T:
-                MoveToEx(dc, cx - gap - arm, cy - gap, NULL); LineTo(dc, cx + gap + arm, cy - gap);
-                MoveToEx(dc, cx, cy - gap, NULL); LineTo(dc, cx, cy + gap + arm);
-                break;
-            case XH_TTYPE:
-                MoveToEx(dc, cx - gap - arm, cy + gap, NULL); LineTo(dc, cx + gap + arm, cy + gap);
-                MoveToEx(dc, cx, cy - gap - arm, NULL); LineTo(dc, cx, cy + gap);
-                break;
-            case XH_CHEVRON: {
-                POINT p[3] = {
-                    { cx - arm - gap, cy - arm - gap },
-                    { cx + gap,       cy },
-                    { cx - arm - gap, cy + arm + gap } };
-                Polyline(dc, p, 3);
-                break; }
-            case XH_CIRCLE: {
-                int r = gap + arm;
-                Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
-                break; }
-            }
-        }
-        /* pass 2 — colour strokes */
-        FILL_ON();
-        switch (c->shape) {
-        case XH_CROSS:
-            MoveToEx(dc, cx - gap - arm, cy, NULL); LineTo(dc, cx + gap + arm, cy);
-            MoveToEx(dc, cx, cy - gap - arm, NULL); LineTo(dc, cx, cy + gap + arm);
-            break;
-        case XH_T:
-            MoveToEx(dc, cx - gap - arm, cy - gap, NULL); LineTo(dc, cx + gap + arm, cy - gap);
-            MoveToEx(dc, cx, cy - gap, NULL); LineTo(dc, cx, cy + gap + arm);
-            break;
-        case XH_TTYPE:
-            MoveToEx(dc, cx - gap - arm, cy + gap, NULL); LineTo(dc, cx + gap + arm, cy + gap);
-            MoveToEx(dc, cx, cy - gap - arm, NULL); LineTo(dc, cx, cy + gap);
-            break;
-        case XH_CHEVRON: {
-            POINT p[3] = {
-                { cx - arm - gap, cy - arm - gap },
-                { cx + gap,       cy },
-                { cx - arm - gap, cy + arm + gap } };
-            Polyline(dc, p, 3);
-            break; }
-        case XH_CIRCLE: {
-            int r = gap + arm;
-            Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
-            break; }
-        }
+    switch (g_cfg.shape) {
+    case CXXH_DOT:      draw_dot(); break;
+    case CXXH_CIRCLE:   draw_ring(); break;
+    case CXXH_SQUARE:   draw_square(); break;
+    case CXXH_PLUS:     draw_plus(); break;
+    case CXXH_CHEVRON:  draw_chevron(); break;
+    case CXXH_T:        draw_T(); break;
+    case CXXH_TTYPE:    draw_Ttype(); break;
+    case CXXH_FOURDOT:  draw_fourdot(); break;
+    case CXXH_CROSS:
+    default:            draw_cross(); break;
     }
 
-    /* alpha pass 1: opaque where anything drawn */
-    {
-        DWORD *px = (DWORD *)pb;
-        for (int i = 0; i < W * H; i++)
-            if (px[i] & 0x00FFFFFF) px[i] |= 0xFF000000;
+    if (g_cfg.dot && (g_cfg.shape == CXXH_CROSS || g_cfg.shape == CXXH_PLUS ||
+                      g_cfg.shape == CXXH_CIRCLE)) {
+        int r = (D.t + 2) / 2;
+        for (int y = -r; y <= r; y++)
+            for (int x = -r; x <= r; x++)
+                if (x * x + y * y <= r * r)
+                    putpx(D.cx + x, D.cy + y, D.fc);
     }
 
-    /* dot — separate so it can carry its own opacity */
-    if (c->shape == XH_DOT || c->shape == XH_CROSS || c->shape == XH_CIRCLE) {
-        /* centre dot is optional on top of shapes only for XH_DOT */
-    }
-    if (c->shape == XH_DOT) {
-        SelectObject(dc, penF); SelectObject(dc, brF);
-        int r = dot_r;
-        Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
-        DWORD *px = (DWORD *)pb;
-        int a = clampi(g_xh.dotop, 0, 100) * 255 / 100;
-        /* pixels the brush just touched have rgb but no alpha yet — tag via colour match */
-        for (int i = 0; i < W * H; i++) {
-            DWORD v = px[i];
-            if ((v & 0x00FFFFFF) && !(v & 0xFF000000)) {
-                BYTE rr = GetRValue(v), gg = GetGValue(v), bb = GetBValue(v);
-                px[i] = ((DWORD)a << 24) | ((DWORD)(rr * a / 255) << 16) |
-                        ((DWORD)(gg * a / 255) << 8) | (DWORD)(bb * a / 255);
-            }
-        }
-        /* premultiply fully opaque shape pixels */
-        for (int i = 0; i < W * H; i++) {
-            DWORD v = px[i];
-            if ((v & 0xFF000000) == 0xFF000000) {
-                BYTE rr = GetRValue(v), gg = GetGValue(v), bb = GetBValue(v);
-                px[i] = 0xFF000000 | ((DWORD)rr << 16) | ((DWORD)gg << 8) | bb;
-            }
-        }
-    }
-
-    /* copy result out */
-    memcpy(bits, pb, (size_t)W * H * 4);
-
-    SelectObject(dc, oldPen); SelectObject(dc, oldBr);
-    DeleteObject(penO); DeleteObject(penF); DeleteObject(brF);
-    DeleteObject(bmp);
+    SelectObject(dc, old);
     DeleteDC(dc);
+    ReleaseDC(NULL, screen);
+    return bmp;
 }
 
-static void xh_render_and_show(void)
+static int monitor_rect(int which, RECT *out)
 {
-    if (!g_xh_wnd) return;
-    if (!g_xh.on) {
-        if (g_xh_shown) { ShowWindow(g_xh_wnd, SW_HIDE); g_xh_shown = 0; }
-        return;
+    if (which < 0) {
+        RECT wa;
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+        *out = wa;
+        return 1;
     }
-
-    int S = 4;                       /* supersample */
-    int pad = 8;
-    int w1 = 2 * (g_xh.size + g_xh.gap + g_xh.thick + g_xh.outline * 2 + pad) + 8;
-    int h1 = w1;
-    if (w1 < 24) w1 = h1 = 24;
-    int W = w1 * S, H = h1 * S;
-
-    /* draw big */
-    BYTE *big = (BYTE *)calloc((size_t)W * H, 4);
-    if (!big) return;
-    draw_shape(big, W, H, &g_xh, S);
-
-    /* downsample to 1x (halftone-ish box via StretchDIBits) */
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = W;
-    bi.bmiHeader.biHeight = -H;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-
-    BITMAPINFO bo;
-    memset(&bo, 0, sizeof bo);
-    bo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bo.bmiHeader.biWidth = w1;
-    bo.bmiHeader.biHeight = -h1;
-    bo.bmiHeader.biPlanes = 1;
-    bo.bmiHeader.biBitCount = 32;
-    bo.bmiHeader.biCompression = BI_RGB;
-    void *pb1 = NULL;
-    HBITMAP small = CreateDIBSection(NULL, &bo, DIB_RGB_COLORS, &pb1, NULL, 0);
-    if (!small || !pb1) { free(big); if (small) DeleteObject(small); return; }
-
-    HDC sdc = CreateCompatibleDC(NULL);
-    HGDIOBJ olds = SelectObject(sdc, small);
-    SetStretchBltMode(sdc, HALFTONE);
-    SetBrushOrgEx(sdc, 0, 0, NULL);
-    /* stretch the supersampled buffer straight into the 1x DIB */
-    StretchDIBits(sdc, 0, 0, w1, h1, 0, 0, W, H, big, &bi,
-                  DIB_RGB_COLORS, SRCCOPY);
-
-    POINT ptSrc = { 0, 0 };
-    SIZE sz = { w1, h1 };
-    RECT mon;
-    POINT cp;
-    GetCursorPos(&cp);
-    HMONITOR monh = MonitorFromPoint(cp, MONITOR_DEFAULTTOPRIMARY);
-    MONITORINFO mi; mi.cbSize = sizeof mi;
-    GetMonitorInfoW(monh, &mi);
-    mon = mi.rcMonitor;
-    POINT pos = { (mon.left + mon.right) / 2 - w1 / 2,
-                  (mon.top + mon.bottom) / 2 - h1 / 2 };
-
-    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    UpdateLayeredWindow(g_xh_wnd, NULL, &pos, &sz, sdc, &ptSrc, 0, &bf, ULW_ALPHA);
-
-    SelectObject(sdc, olds);
-    DeleteDC(sdc);
-    DeleteObject(small);
-    free(big);
-
-    if (!g_xh_shown) { ShowWindow(g_xh_wnd, SW_SHOWNOACTIVATE); g_xh_shown = 1; }
-    SetWindowPos(g_xh_wnd, HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    const MonInfo *m = MonGet(which);
+    if (!m) return 0;
+    out->left = m->x; out->top = m->y;
+    out->right = m->x + m->w; out->bottom = m->y + m->h;
+    return 1;
 }
 
-static LRESULT CALLBACK xh_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
+static void ensure_window(void)
 {
-    (void)wp; (void)lp;
-    switch (msg) {
-    case WM_NCHITTEST: return HTTRANSPARENT;
-    case WM_ERASEBKGND: return 1;
-    case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(wnd, &ps); EndPaint(wnd, &ps); return 0; }
-    }
-    return DefWindowProcW(wnd, msg, wp, lp);
+    if (g_xhwnd) return;
+    WNDCLASSEXW wc;
+    memset(&wc, 0, sizeof wc);
+    wc.cbSize = sizeof wc;
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = g_inst;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.lpszClassName = CX_XH_CLASS;
+    if (!RegisterClassExW(&wc)) return;
+    g_xhwnd = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        CX_XH_CLASS, L"ChromaX Crosshair", WS_POPUP,
+        0, 0, 1, 1, NULL, NULL, g_inst, NULL);
 }
 
 void Xh_Init(void)
 {
-    WNDCLASSW wc;
-    memset(&wc, 0, sizeof wc);
-    wc.lpfnWndProc = xh_proc;
-    wc.hInstance = g_inst;
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.lpszClassName = CX_XH_CLASS;
-    RegisterClassW(&wc);
-
-    g_xh_wnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT |
-        WS_EX_NOACTIVATE,
-        CX_XH_CLASS, L"", WS_POPUP, 0, 0, 10, 10, NULL, NULL, g_inst, NULL);
-}
-
-void Xh_Shutdown(void)
-{
-    g_xh.on = 0;
-    if (g_xh_wnd) { DestroyWindow(g_xh_wnd); g_xh_wnd = NULL; }
-    g_xh_shown = 0;
+    g_cfg.on = 0;
+    g_cfg.shape = CXXH_CROSS;
+    g_cfg.size = 22;
+    g_cfg.gap = 6;
+    g_cfg.thick = 3;
+    g_cfg.opacity = 100;
+    g_cfg.outline = 1;
+    g_cfg.dot = 0;
+    g_cfg.rotation = 0;
+    g_cfg.monitor = -1;
+    g_cfg.color = RGB(255, 255, 255);
+    g_cfg.ocolor = RGB(0, 0, 0);
 }
 
 void Xh_Update(const XhCfg *cfg)
 {
-    if (cfg) g_xh = *cfg;
-    xh_render_and_show();
+    g_cfg = *cfg;
+    g_cfg.size = clampi(g_cfg.size, 6, 64);
+    g_cfg.gap = clampi(g_cfg.gap, 0, 24);
+    g_cfg.thick = clampi(g_cfg.thick, 1, 10);
+    g_cfg.opacity = clampi(g_cfg.opacity, 0, 100);
+    g_cfg.rotation = (g_cfg.rotation % 360 + 360) % 360;
+    if (g_cfg.monitor >= MonCount()) g_cfg.monitor = -1;
+
+    if (!g_cfg.on) {
+        if (g_xhwnd) ShowWindow(g_xhwnd, SW_HIDE);
+        if (g_bmp) { DeleteObject(g_bmp); g_bmp = NULL; }
+        return;
+    }
+
+    ensure_window();
+    if (!g_xhwnd) return;
+
+    RECT r;
+    if (!monitor_rect(g_cfg.monitor, &r)) return;
+
+    HBITMAP bmp = build_bitmap(r.right - r.left, r.bottom - r.top);
+    if (!bmp) return;
+    if (g_bmp) DeleteObject(g_bmp);
+    g_bmp = bmp;
+
+    MoveWindow(g_xhwnd, r.left, r.top, r.right - r.left, r.bottom - r.top, TRUE);
+    BLENDFUNCTION bf;
+    bf.BlendOp = AC_SRC_OVER;
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    /* UpdateLayeredWindow composites from a source DC holding the DIB */
+    HDC screen = GetDC(NULL);
+    HDC mem = CreateCompatibleDC(screen);
+    HGDIOBJ old = SelectObject(mem, bmp);
+    SIZE sz = { r.right - r.left, r.bottom - r.top };
+    POINT src = { 0, 0 };
+    UpdateLayeredWindow(g_xhwnd, NULL, NULL, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+    SelectObject(mem, old);
+    DeleteDC(mem);
+    ReleaseDC(NULL, screen);
+    ShowWindow(g_xhwnd, SW_SHOWNOACTIVATE);
 }
 
 void Xh_Toggle(void)
 {
-    g_xh.on = !g_xh.on;
-    xh_render_and_show();
+    g_cfg.on = !g_cfg.on;
+    Xh_Update(&g_cfg);
+}
+
+void Xh_Shutdown(void)
+{
+    if (g_bmp) { DeleteObject(g_bmp); g_bmp = NULL; }
+    if (g_xhwnd) { DestroyWindow(g_xhwnd); g_xhwnd = NULL; }
 }

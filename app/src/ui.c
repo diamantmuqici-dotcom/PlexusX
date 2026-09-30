@@ -1,985 +1,2400 @@
-/* ui.c — hand-drawn dark UI: sidebar, sliders, toggles, lists, swatches */
+/* ui.c \u2014 ChromaX main window (custom-drawn, dark theme, 10 pages)
+ *
+ * Original visual design; no copied assets.  All drawing is GDI/GDI+ free
+ * (pure GDI) for speed.  Widgets are a flat list rebuilt per panel;
+ * one scroll offset per panel; hit-testing walks the list in reverse.
+ */
 #include "common.h"
+#include <commdlg.h>
+#include <shlobj.h>
 
-#define ID_SWATCH_O 820
+/* ---------------- theme ---------------- */
 
-#define WIN_W 1240
-#define WIN_H 800
-#define SIDE_W 216
-#define TOP_H 52
+#define COL_BG      RGB(15, 17, 23)
+#define COL_BG1     RGB(22, 26, 35)
+#define COL_BG2     RGB(29, 34, 48)
+#define COL_BG3     RGB(38, 45, 63)
+#define COL_LINE    RGB(38, 44, 59)
+#define COL_ACC     RGB(62, 214, 176)
+#define COL_ACCD    RGB(24, 92, 78)
+#define COL_ACC2    RGB(124, 92, 255)
+#define COL_TXT     RGB(232, 236, 244)
+#define COL_DIM     RGB(139, 147, 167)
+#define COL_DIM2    RGB(96, 104, 124)
+#define COL_OK      RGB(74, 222, 128)
+#define COL_WARN    RGB(250, 204, 21)
+#define COL_ERR     RGB(255, 107, 107)
 
-#define C_BG    RGB(12,12,16)
-#define C_SIDE  RGB(15,15,21)
-#define C_CARD  RGB(23,23,30)
-#define C_CARD2 RGB(31,31,41)
-#define C_LINE  RGB(42,42,55)
-#define C_TXT   RGB(240,240,245)
-#define C_SUB   RGB(140,140,153)
-#define C_DIM   RGB(96,96,110)
-#define C_ACC   RGB(198,255,61)
-#define C_DARK  RGB(10,10,14)
-#define C_DANG  RGB(255,96,96)
-#define C_VIO   RGB(123,92,255)
+#define SIDEBAR_W   236
+#define TOP_H       58
+#define STATUS_H    30
+#define PAGE        10
 
-static HWND    g_ui_hwnd;
-static float   g_sc = 1.f;
-static Widget  g_w[MAX_WIDGETS];
-static int     g_nw;
-static int     g_panel = ID_SIDE_DISPLAY;
-static Look    g_look = { 150, 0, 0, 0, 0, 1.f, 1 };
-static XhCfg   g_xh = { 0, XH_CROSS, 16, 4, 2, 100, 1, RGB(0x7C,0xFF,0x40), RGB(0,0,0) };
-static int     g_selProf = -1, g_selMode = -1;
-static int     g_active, g_hover;
-static int     g_runScroll, g_modeScroll;
-static wchar_t g_title[64] = L"Display";
-static wchar_t g_toast[128];
-static DWORD   g_toastT;
-static int     g_startwin, g_phoneon;
+enum {
+    PG_HOME = 0, PG_GAMES, PG_DISPLAY, PG_COLOR, PG_PRESETS,
+    PG_CROSSHAIR, PG_MONITORS, PG_AUTOMATION, PG_TOOLS, PG_SETTINGS
+};
 
-static HFONT g_fBig, g_fH1, g_fH2, g_fBody, g_fSmall, g_fMono;
-static HBRUSH br_line_dummy(void);
+static const wchar_t *PG_NAMES[PG_HOME == 0 ? PAGE : 1] = {
+    L"Home", L"Games", L"Display", L"Color", L"Presets",
+    L"Crosshair", L"Monitors", L"Automation", L"Tools", L"Settings"
+};
 
-static int S(int v) { return (int)(v * g_sc + 0.5f); }
+/* ---------------- widgets ---------------- */
 
-static void mkfonts(void)
+enum {
+    W_LABEL = 1, W_HEAD, W_DIM, W_BTN, W_PRI, W_GHOST,
+    W_SLIDER, W_TOGGLE, W_ROW, W_CARD, W_SCENE, W_SEARCH, W_TEXT,
+    W_SPACER, W_SWATCH, W_SHAPES, W_SELECT
+};
+
+typedef struct {
+    int type;
+    int id;
+    RECT r;
+    int pad;          /* vertical padding inside cards/rows */
+    /* text */
+    const wchar_t *str;
+    wchar_t dyn[160]; /* dynamic text (not NUL-terminated guaranteed? always is) */
+    wchar_t text2[160];
+    /* numbers */
+    int num;
+    float fnum;
+    float smin, smax;
+    int sel;          /* selected (rows/cards/toggles) */
+    int enabled;
+    int focus;
+    char buf[160];    /* search text (utf-8) */
+    int scene;        /* scene idx */
+    int shape;        /* shapes strip: 1 = int slider */
+    intptr_t arg1;    /* misc (often a pointer) */
+    wchar_t selLabel[160]; /* for W_SELECT */
+} Widget;
+
+#define MAX_WIDGETS 480
+static Widget g_w[MAX_WIDGETS];
+static int    g_nw;
+static int    g_page = PG_HOME;
+static int    g_scroll = 0;
+static int    g_scrollMax = 0;
+static int    g_focusId = -1;
+static int    g_hotcapId = -1;   /* hotkey capture widget */
+
+/* action ids */
+enum {
+    A_NONE = 0,
+    /* home */
+    A_HOME_GAMING, A_HOME_XH, A_HOME_PHONE, A_HOME_PHONE_TOKEN,
+    A_HOME_RESET, A_HOME_BACKUP, A_HOME_RESTORE_LKG, A_HOME_TEST1,
+    A_HOME_TEST2, A_HOME_TEST3, A_HOME_TEST4,
+    /* games */
+    A_GAME_SELECT, A_GAME_LOOK, A_GAME_APPLY, A_GAME_FAV, A_GAME_AUTO,
+    /* display */
+    A_MON_SELECT, A_MODE_SELECT, A_MODE_APPLY, A_PRESET_RATIO, A_HDR_TOGGLE,
+    A_HDR_OPEN,
+    /* color */
+    A_SLIDER, A_COLOR_MASTER, A_COLOR_RESET_SYS, A_COLOR_RESET_MON,
+    A_COLOR_MON, A_LOOK_CHIP,
+    /* presets */
+    A_PRESET_APPLY, A_PRESET_DELETE, A_PRESET_SAVE, A_PRESET_IMPORT,
+    A_PRESET_EXPORT,
+    /* crosshair */
+    A_XH_ON, A_XH_SHAPE, A_XH_OUTLINE, A_XH_DOT, A_XH_COLOR, A_XH_OCOLOR,
+    A_XH_MON, A_XH_SIZE, A_XH_PRESET,
+    /* automation */
+    A_AUTO_APPLY, A_AUTO_RESTORE, A_AUTO_HK,
+    /* tools */
+    A_TL_BACKUP, A_TL_RESTORE, A_TL_RESTORE_BK, A_TL_PATTERN, A_TL_DIAG,
+    A_TL_LOG, A_TL_DATA, A_TL_CLEARLOG, A_TL_BK_LIST,
+    /* settings */
+    A_SET_STARTWIN, A_SET_TRAY, A_SET_NOTIFY, A_SET_RESET, A_SET_PHONE,
+    A_SET_PHONE_TOKEN,
+    /* generic */
+    A_NAV, A_SCENE, A_SEARCH
+};
+
+static void toast(const wchar_t *s);
+static int g_curScene;
+static int GetColor(COLORREF *c);
+static char *g_focusBuf(void);
+static void sync_focus_buf(void);
+
+/* forward */
+static void build_page(void);
+static void refresh(void);
+static void on_action(int id, int arg1);
+
+/* widget builders \u2014 all content coords (before scroll).
+ * Text is copied into the widget's dyn buffer (lifetime-safe). */
+static void W(int type, int id, int x, int y, int w, int h, const wchar_t *s,
+              int num, float fnum)
 {
-    g_fBig   = CreateFontW(-S(48), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fH1    = CreateFontW(-S(28), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fH2    = CreateFontW(-S(17), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fBody  = CreateFontW(-S(15), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fSmall = CreateFontW(-S(13), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    g_fMono  = CreateFontW(-S(15), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
+    if (g_nw >= MAX_WIDGETS) return;
+    Widget *p = &g_w[g_nw++];
+    memset(p, 0, sizeof *p);
+    p->type = type; p->id = id;
+    p->r.left = x; p->r.top = y; p->r.right = x + w; p->r.bottom = y + h;
+    lstrcpynW(p->dyn, s ? s : L"", 160);
+    p->str = p->dyn;
+    p->num = num; p->fnum = fnum;
+    p->enabled = 1;
 }
 
-/* ---------------- widget helpers ---------------- */
-
-static Widget *wadd(int type, int id, int x, int y, int w, int h, const wchar_t *text)
+static void W_slider(int id, int x, int y, int w, const wchar_t *label,
+                     float *v, float vmin, float vmax)
 {
-    if (g_nw >= MAX_WIDGETS) return &g_w[0];
-    Widget *k = &g_w[g_nw++];
-    memset(k, 0, sizeof *k);
-    k->type = type;
-    k->id = id;
-    k->rc = (RECT){ S(x), S(y), S(x + w), S(y + h) };
-    if (text) lstrcpynW(k->text, text, 96);
-    return k;
+    W(W_SLIDER, id, x, y, w, 40, label, 0, *v);
+    g_w[g_nw - 1].smin = vmin;
+    g_w[g_nw - 1].smax = vmax;
+    g_w[g_nw - 1].arg1 = (int)(intptr_t)v;   /* pointer to value */
 }
 
-static void set_slider_val(Widget *k, float v, const wchar_t *fmtw)
+static void W_toggle(int id, int x, int y, int w, const wchar_t *label, int *v)
 {
-    k->val[0] = 0;
-    if (fmtw && wcscmp(fmtw, L"g") == 0) _snwprintf(k->val, 48, L"%.2f", v);
-    else if (fmtw && wcscmp(fmtw, L"p") == 0) wsprintfW(k->val, L"%d%%", (int)v);
-    else if (fmtw && wcscmp(fmtw, L"s") == 0) wsprintfW(k->val, L"%+d%%", (int)v);
-    else if (fmtw && wcscmp(fmtw, L"d") == 0) wsprintfW(k->val, L"%+d°", (int)v);
+    W(W_TOGGLE, id, x, y, w, 30, label, *v, 0);
+    g_w[g_nw - 1].arg1 = (int)(intptr_t)v;
 }
 
-static void sl(Widget *k)
+static void W_slider_i(int id, int x, int y, int w, const wchar_t *label,
+                       int *v, int vmin, int vmax)
 {
-    float v = 0; const wchar_t *f = L"s";
-    switch (k->id) {
-    case ID_SAT:   v = g_look.sat;  f = L"p"; k->vmin = 100; k->vmax = 300; break;
-    case ID_BRI:   v = g_look.bri;  f = L"s"; k->vmin = -100; k->vmax = 100; break;
-    case ID_CON:   v = g_look.con;  f = L"s"; k->vmin = -100; k->vmax = 100; break;
-    case ID_TEMP:  v = g_look.temp; f = L"s"; k->vmin = -100; k->vmax = 100; break;
-    case ID_HUE:   v = g_look.hue;  f = L"d"; k->vmin = -60; k->vmax = 60; break;
-    case ID_GAMMA: v = g_look.gamma; f = L"g"; k->vmin = 0.40f; k->vmax = 2.40f; break;
-    case ID_XH_SIZE:  v = (float)g_xh.size;  f = L"p"; k->vmin = 6; k->vmax = 48; break;
-    case ID_XH_GAP:   v = (float)g_xh.gap;   f = L"p"; k->vmin = 0; k->vmax = 24; break;
-    case ID_XH_THICK: v = (float)g_xh.thick; f = L"p"; k->vmin = 1; k->vmax = 10; break;
-    case ID_XH_DOTOP: v = (float)g_xh.dotop; f = L"p"; k->vmin = 0; k->vmax = 100; break;
+    W(W_SLIDER, id, x, y, w, 40, label, *v, *v);
+    g_w[g_nw - 1].smin = vmin;
+    g_w[g_nw - 1].smax = vmax;
+    g_w[g_nw - 1].arg1 = (int)(intptr_t)v;
+    g_w[g_nw - 1].shape = 1;   /* marks int slider */
+}
+
+static void W_row(int id, int x, int y, int w, int h, const wchar_t *title,
+                  const wchar_t *sub, int sel)
+{
+    W(W_ROW, id, x, y, w, h, title, sel, 0);
+    lstrcpynW(g_w[g_nw - 1].text2, sub ? sub : L"", 160);
+}
+
+static void W_card(int id, int x, int y, int w, int h, const wchar_t *title,
+                   const wchar_t *body, int sel)
+{
+    W(W_CARD, id, x, y, w, h, title, sel, 0);
+    lstrcpynW(g_w[g_nw - 1].text2, body ? body : L"", 160);
+}
+
+static void W_text(int x, int y, int w, int h, const wchar_t *s)
+{
+    W(W_TEXT, -1, x, y, w, h, s, 0, 0);
+}
+
+/* Uppercase builder entry points used by the page code.  Function-style
+ * macros, so they only expand at call sites and never collide with the
+ * widget-type enum constants in the ordinary name space. */
+static void W_uniform(int type, int id, int x, int y, int w, int h,
+                      const wchar_t *s, int num, int flag)
+{
+    W(type, id, x, y, w, h, s, num, 0);
+    g_w[g_nw - 1].sel = flag;
+}
+
+static void wh(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_HEAD, id, x, y, w, h, s, num, flag); }
+static void wl(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_LABEL, id, x, y, w, h, s, num, flag); }
+static void wd(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_DIM, id, x, y, w, h, s, num, flag); }
+static void wb(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_BTN, id, x, y, w, h, s, num, flag); }
+static void wp(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_PRI, id, x, y, w, h, s, num, flag); }
+static void wg(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_GHOST, id, x, y, w, h, s, num, flag); }
+static void ws(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_SEARCH, id, x, y, w, h, s, num, flag); }
+static void wv(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_SELECT, id, x, y, w, h, s, num, flag); }
+static void wq(int id, int x, int y, int w, int h, const wchar_t *s, int num, int flag)
+{ W_uniform(W_SWATCH, id, x, y, w, h, s, num, flag); }
+static void wscene(int id, int x, int y, int w, int h, const wchar_t *s, int scene, int sel)
+{
+    W_uniform(W_SCENE, id, x, y, w, h, s, 0, sel);
+    g_w[g_nw - 1].scene = scene;
+}
+static void wshapes(int id, int x, int y, int w, int h, const wchar_t *s, int shape, int flag)
+{ W_uniform(W_SHAPES, id, x, y, w, h, s, shape, flag); }
+
+#define W_HEAD(id, x, y, w, h, s, num, flag)    wh(id, x, y, w, h, s, num, flag)
+#define W_LABEL(id, x, y, w, h, s, num, flag)   wl(id, x, y, w, h, s, num, flag)
+#define W_DIM(id, x, y, w, h, s, num, flag)     wd(id, x, y, w, h, s, num, flag)
+#define W_BTN(id, x, y, w, h, s, num, flag)     wb(id, x, y, w, h, s, num, flag)
+#define W_PRI(id, x, y, w, h, s, num, flag)     wp(id, x, y, w, h, s, num, flag)
+#define W_GHOST(id, x, y, w, h, s, num, flag)   wg(id, x, y, w, h, s, num, flag)
+#define W_SEARCH(id, x, y, w, h, s, num, flag)  ws(id, x, y, w, h, s, num, flag)
+#define W_SELECT(id, x, y, w, h, s, num, flag)  wv(id, x, y, w, h, s, num, flag)
+#define W_SWATCH(id, x, y, w, h, s, num, flag)  wq(id, x, y, w, h, s, num, flag)
+#define W_SCENE(id, x, y, w, h, s, scene, sel)  wscene(id, x, y, w, h, s, scene, sel)
+#define W_SHAPES(id, x, y, w, h, s, shape, flag) wshapes(id, x, y, w, h, s, shape, flag)
+#define W_SLIDER(id, x, y, w, label, v, lo, hi) W_slider(id, x, y, w, label, v, lo, hi)
+#define W_TOGGLE(id, x, y, w, label, v)         W_toggle(id, x, y, w, label, v)
+#define W_ROW(id, x, y, w, h, title, sub, sel)  W_row(id, x, y, w, h, title, sub, sel)
+#define W_CARD(id, x, y, w, h, title, body, sel) W_card(id, x, y, w, h, title, body, sel)
+#define W_TEXT(x, y, w, h, s)                   W_text(x, y, w, h, s)
+
+/* ---------------- small draw helpers ---------------- */
+
+static void fill(HDC dc, RECT r, COLORREF c)
+{
+    HBRUSH b = CreateSolidBrush(c);
+    FillRect(dc, &r, b);
+    DeleteObject(b);
+}
+
+static void line_v(HDC dc, int x, int y0, int y1, COLORREF c)
+{
+    HPEN p = CreatePen(PS_SOLID, 1, c);
+    HPEN o = (HPEN)SelectObject(dc, p);
+    MoveToEx(dc, x, y0, NULL);
+    LineTo(dc, x, y1);
+    SelectObject(dc, o);
+    DeleteObject(p);
+}
+
+static void line_h(HDC dc, int y, int x0, int x1, COLORREF c)
+{
+    HPEN p = CreatePen(PS_SOLID, 1, c);
+    HPEN o = (HPEN)SelectObject(dc, p);
+    MoveToEx(dc, x0, y, NULL);
+    LineTo(dc, x1, y);
+    SelectObject(dc, o);
+    DeleteObject(p);
+}
+
+static void text2(HDC dc, const wchar_t *s, RECT *r, COLORREF c,
+                  int size, int bold, int align)
+{
+    HFONT f = CreateFontW(-size, 0, 0, 0, bold ? FW_SEMIBOLD : FW_NORMAL,
+                          FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                          L"Segoe UI");
+    HFONT old = (HFONT)SelectObject(dc, f);
+    SetTextColor(dc, c);
+    SetBkMode(dc, TRANSPARENT);
+    DrawTextW(dc, s, -1, r, align | DT_NOPREFIX | DT_EDITCONTROL);
+    SelectObject(dc, old);
+    DeleteObject(f);
+}
+
+static void round_rect(HDC dc, RECT *r, int rad, COLORREF fillc, COLORREF linec)
+{
+    HBRUSH b = CreateSolidBrush(fillc);
+    HPEN p = CreatePen(PS_SOLID, 1, linec);
+    HBRUSH ob = (HBRUSH)SelectObject(dc, b);
+    HPEN op = (HPEN)SelectObject(dc, p);
+    RoundRect(dc, r->left, r->top, r->right, r->bottom, rad, rad);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(b);
+    DeleteObject(p);
+}
+
+/* ---------------- chrome ---------------- */
+
+static void draw_sidebar(HDC dc, int cw, int ch)
+{
+    (void)cw;
+    RECT r = { 0, 0, SIDEBAR_W, ch - STATUS_H };
+    fill(dc, r, COL_BG1);
+    line_v(dc, SIDEBAR_W, 0, ch - STATUS_H, COL_LINE);
+
+    /* logo */
+    RECT lr = { 20, 16, SIDEBAR_W - 20, 44 };
+    text2(dc, L"ChromaX", &lr, COL_ACC, 20, TRUE, DT_LEFT);
+    RECT vr = { 20, 44, SIDEBAR_W - 20, 58 };
+    text2(dc, L"v2.0.0  display control", &vr, COL_DIM2, 10, FALSE, DT_LEFT);
+
+    for (int i = 0; i < PAGE; i++) {
+        int y = 76 + i * 42;
+        int on = (g_page == i);
+        if (on) {
+            RECT rr = { 10, y, SIDEBAR_W - 10, y + 36 };
+            round_rect(dc, &rr, 8, COL_BG2, COL_BG2);
+            RECT br = { 4, y + 8, 7, y + 28 };
+            fill(dc, br, COL_ACC);
+        }
+        RECT tr = { 24, y + 8, SIDEBAR_W - 24, y + 34 };
+        text2(dc, PG_NAMES[i], &tr, on ? COL_TXT : COL_DIM, 13, on, DT_LEFT);
     }
-    set_slider_val(k, v, f);
-}
 
-static void build_side(void)
-{
-    for (int i = 0; i < 6; i++) {
-        static const wchar_t *nm[] = { L"Display", L"Game looks", L"Scenes",
-                                       L"Crosshair", L"Modes", L"Settings" };
-        Widget *k = wadd(WT_SIDE, ID_SIDE_BASE + i, 16, 116 + i * 52, 184, 46, nm[i]);
-        k->state = (ID_SIDE_BASE + i == g_panel);
+    /* bottom info: GPU / display / HDR / app status (5s query TTL) */
+    {
+        static DWORD lastQ = 0;
+        static wchar_t gpuTxt[64];
+        static wchar_t dispTxt[48];
+        static wchar_t hdrTxt[48];
+        DWORD now = GetTickCount();
+        if (now - lastQ > 5000) {
+            lastQ = now;
+            const char *g = MonGpuName();
+            MultiByteToWideChar(CP_UTF8, 0, g, -1, gpuTxt, 63);
+            gpuTxt[63] = 0;
+            const MonInfo *m0 = MonGet(0);
+            if (m0 && m0->res_w > 0)
+                wsprintfW(dispTxt, L"%d\u00d7%d @%dHz", m0->res_w, m0->res_h, m0->hz);
+            else
+                lstrcpyW(dispTxt, L"no display");
+            HdrState hs;
+            Hdr_Scan(&hs);
+            if (!hs.found)          lstrcpyW(hdrTxt, L"n/a");
+            else if (!hs.capable)   lstrcpyW(hdrTxt, L"off \u00b7 not supported");
+            else                    lstrcpyW(hdrTxt, hs.enabled ? L"on" : L"off");
+        }
+        int by = ch - STATUS_H - 96;
+        line_h(dc, 0, by - 6, SIDEBAR_W, COL_LINE);
+        struct { const wchar_t *k, *v; } rows[4] = {
+            { L"GPU",     gpuTxt },
+            { L"Display", dispTxt },
+            { L"HDR",     hdrTxt },
+            { L"Status",  g_gaming ? L"Gaming mode" : L"Active" },
+        };
+        for (int i = 0; i < 4; i++) {
+            int ry = by + i * 20;
+            RECT rk = { 16, ry, 58, ry + 16 };
+            RECT rv = { 60, ry, SIDEBAR_W - 10, ry + 16 };
+            text2(dc, rows[i].k, &rk, COL_DIM2, 10, FALSE, DT_LEFT);
+            text2(dc, rows[i].v, &rv, COL_DIM, 10, FALSE, DT_LEFT);
+        }
     }
-    wadd(WT_LABEL, 0, 24, 690, 180, 20, L"v" CX_VERSION "  ·  MIT source");
-    Widget *c = wadd(WT_CARD_INFO, 0, 16, 716, 184, 64, L"FREE FOREVER");
-    lstrcpyW(c->val, L"no account · no card");
 }
 
-static void build_top(void)
+static void draw_topbar(HDC dc, int cw)
 {
-    wadd(WT_BTN, ID_CAP_MIN,   WIN_W - 104, 10, 42, 34, L"-");
-    wadd(WT_BTN, ID_CAP_CLOSE, WIN_W - 54,  10, 42, 34, L"✕");
+    RECT r = { SIDEBAR_W, 0, cw, TOP_H };
+    fill(dc, r, COL_BG);
+    line_v(dc, SIDEBAR_W, 0, 0, COL_LINE);
+    RECT tr = { SIDEBAR_W + 24, 14, cw - 24, TOP_H - 10 };
+    text2(dc, PG_NAMES[g_page], &tr, COL_TXT, 17, TRUE, DT_LEFT);
+
+    /* status pill on the right */
+    CxLook lk = g_look;
+    const wchar_t *st = !lk.enabled || CxLook_IsNeutral(&lk) ? L"Neutral"
+                       : L"Custom look active";
+    RECT pr = { cw - 190, 15, cw - 20, 41 };
+    round_rect(dc, &pr, 13, COL_BG1, COL_LINE);
+    RECT tr2 = { pr.left + 12, pr.top + 6, pr.right - 12, pr.bottom - 6 };
+    text2(dc, st, &tr2, CxLook_IsNeutral(&lk) || !lk.enabled ? COL_DIM : COL_OK,
+          11, FALSE, DT_CENTER);
 }
 
-/* -------- display panel -------- */
-static void build_display(void)
+static void draw_statusbar(HDC dc, int cw, int ch)
 {
-    wadd(WT_HEAD, 0, 252, 92, 500, 40, L"Display");
-    wadd(WT_LABEL, 0, 252, 134, 640, 24, L"Your whole-screen look. Free — no account, no card.");
-    wadd(WT_READOUT, 0, 1044, 84, 156, 92, NULL);
+    RECT r = { 0, ch - STATUS_H, cw, ch };
+    fill(dc, r, COL_BG1);
+    line_h(dc, ch - STATUS_H, 0, cw, COL_LINE);
 
-    Widget *t = wadd(WT_TOGGLE, ID_T_ENABLE, 252, 176, 340, 36, L"Look enabled");
-    t->state = g_look.enabled;
-
-    if (!Eng_Available())
-        wadd(WT_LABEL, 0, 252, 216, 700, 22, L"Windows colour filter unavailable on this PC — using GPU gamma.");
-
-    sl(wadd(WT_SLIDER, ID_SAT,   252, 254, 456, 74, L"Saturation"));
-    sl(wadd(WT_SLIDER, ID_GAMMA, 744, 254, 456, 74, L"GPU gamma"));
-    sl(wadd(WT_SLIDER, ID_BRI,   252, 344, 456, 74, L"Brightness"));
-    sl(wadd(WT_SLIDER, ID_CON,   744, 344, 456, 74, L"Contrast"));
-    sl(wadd(WT_SLIDER, ID_TEMP,  252, 434, 456, 74, L"Temperature"));
-    sl(wadd(WT_SLIDER, ID_HUE,   744, 434, 456, 74, L"Hue shift"));
-
-    Widget *r1 = wadd(WT_GHOST, ID_B_RESET, 252, 544, 170, 44, L"Reset all");
-    (void)r1;
-    wadd(WT_GHOST, ID_B_DISABLE, 434, 544, 190, 44, L"Switch look off");
-
-    wadd(WT_DIV, 0, 252, 620, 948, 34, L"HOTKEYS");
-    wadd(WT_LABEL, 0, 252, 662, 948, 24,
-         L"Ctrl+Alt+↑ / ↓ saturation  ·  Ctrl+Alt+0 reset  ·  Ctrl+Alt+X crosshair  ·  Ctrl+Alt+E look on/off");
-    wadd(WT_LABEL, 0, 252, 700, 948, 44,
-         L"Saturation runs through the Windows colour matrix — the same layer Magnifier uses — so it reaches games, videos and your desktop alike.");
+    wchar_t s[320];
+    int nmon = MonCount();
+    const MonInfo *m0 = MonGet(0);
+    wchar_t gpu[128];
+    {
+        const char *g = MonGpuName();
+        MultiByteToWideChar(CP_UTF8, 0, g, -1, gpu, 127);
+        gpu[127] = 0;
+    }
+    wsprintfW(s, L"%s   \u00b7   %d monitor(s)   \u00b7   %s   \u00b7   %s   \u00b7   %s",
+              gpu, nmon,
+              Eng_MagAvailable() ? L"matrix ok" : L"matrix fallback",
+              Eng_RampAvailable() ? L"ramp ok" : L"ramp blocked",
+              Gw_Enabled() ? L"watch on" : L"watch off");
+    if (m0) {
+        lstrcatW(s, L"   ");
+        lstrcatW(s, m0->name);
+    }
+    RECT tr = { 14, ch - STATUS_H + 6, cw - 14, ch - 4 };
+    text2(dc, s, &tr, COL_DIM, 10, FALSE, DT_LEFT);
 }
 
-/* -------- games panel -------- */
+static wchar_t g_toast_msg[160];
+static DWORD   g_toast_till;
+
+static void draw_toast(HDC dc, int cw, int ch)
+{
+    if (!g_toast_msg[0]) return;
+    if (GetTickCount() > g_toast_till) { g_toast_msg[0] = 0; return; }
+    RECT r = { cw / 2 - 260, ch - STATUS_H - 46, cw / 2 + 260, ch - STATUS_H - 12 };
+    round_rect(dc, &r, 10, COL_BG3, COL_ACC);
+    RECT tr = { r.left + 12, r.top + 8, r.right - 12, r.bottom - 8 };
+    text2(dc, g_toast_msg, &tr, COL_TXT, 11, FALSE, DT_CENTER);
+}
+
+static void toast_impl(const wchar_t *s)
+{
+    lstrcpynW(g_toast_msg, s, 160);
+    g_toast_till = GetTickCount() + 3200;
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+void toast(const wchar_t *s) { toast_impl(s); }
+void UI_Toast(const wchar_t *s) { toast_impl(s); }
+void UI_Refresh(void) { refresh(); }
+
+/* ---------------- widget draw ---------------- */
+
+static void draw_widget(HDC dc, Widget *p)
+{
+    if (p->r.bottom - g_scroll <= 0 || p->r.top - g_scroll > 830) return;
+    RECT r = p->r;
+    r.top -= g_scroll;
+    r.bottom -= g_scroll;
+
+    switch (p->type) {
+    case W_HEAD:
+        text2(dc, p->str, &r, COL_TXT, 15, TRUE, DT_LEFT);
+        break;
+    case W_LABEL:
+        text2(dc, p->str, &r, COL_TXT, 12, FALSE, DT_LEFT);
+        break;
+    case W_DIM:
+        text2(dc, p->str, &r, COL_DIM, 11, FALSE, DT_LEFT);
+        break;
+    case W_BTN:
+    case W_PRI:
+    case W_GHOST: {
+        COLORREF fg = COL_TXT, bg = COL_BG2, ln = COL_BG3;
+        if (p->type == W_PRI) { fg = RGB(10, 20, 18); bg = COL_ACC; ln = COL_ACC; }
+        if (p->type == W_GHOST) { bg = COL_BG1; ln = COL_LINE; fg = COL_DIM; }
+        if (!p->enabled) fg = COL_DIM2;
+        round_rect(dc, &r, 8, bg, ln);
+        RECT tr = { r.left + 8, r.top + (r.bottom - r.top) / 2 - 10,
+                    r.right - 8, r.bottom };
+        tr.bottom = tr.top + 20;
+        text2(dc, p->str, &tr, p->enabled ? fg : COL_DIM2, 11, p->type == W_PRI, DT_CENTER);
+        if (p->text2[0]) {
+            RECT tr2 = { r.left + 8, r.bottom - 20, r.right - 8, r.bottom + 16 };
+            text2(dc, p->text2, &tr2, COL_DIM2, 9, FALSE, DT_CENTER);
+        }
+        break;
+    }
+    case W_SLIDER: {
+        RECT lr = { r.left, r.top, r.right, r.top + 16 };
+        text2(dc, p->str, &lr, COL_DIM, 11, FALSE, DT_LEFT);
+        wchar_t vtxt[40];
+        if (p->smax - p->smin > 20) wsprintfW(vtxt, L"%d", (int)(p->fnum + 0.5f));
+        else wsprintfW(vtxt, L"%.2f", p->fnum);
+        RECT vr = { r.right - 70, r.top, r.right, r.top + 16 };
+        text2(dc, vtxt, &vr, COL_ACC, 11, TRUE, DT_RIGHT);
+        RECT tr = { r.left, r.top + 24, r.right - 70, r.top + 30 };
+        fill(dc, tr, COL_BG3);
+        float t = (p->fnum - p->smin) / (p->smax - p->smin);
+        if (t < 0) t = 0; if (t > 1) t = 1;
+        RECT fr = { r.left, r.top + 23, r.left + (int)(t * (r.right - 70 - r.left)), r.top + 31 };
+        fill(dc, fr, COL_ACC);
+        RECT kr = { fr.right - 5, r.top + 19, fr.right + 5, r.top + 35 };
+        round_rect(dc, &kr, 5, COL_TXT, COL_TXT);
+        break;
+    }
+    case W_TOGGLE: {
+        RECT lr = { r.left, r.top, r.right - 44, r.bottom };
+        text2(dc, p->str, &lr, p->sel ? COL_TXT : COL_DIM, 11, FALSE, DT_LEFT);
+        RECT tr = { r.right - 36, r.top + 4, r.right, r.bottom - 4 };
+        round_rect(dc, &tr, 10, p->sel ? COL_ACCD : COL_BG3, p->sel ? COL_ACC : COL_LINE);
+        RECT kr = { p->sel ? tr.right - 18 : tr.left + 4, tr.top + 4,
+                    p->sel ? tr.right - 4 : tr.left + 18, tr.bottom - 4 };
+        round_rect(dc, &kr, 7, p->sel ? COL_ACC : COL_DIM, p->sel ? COL_ACC : COL_DIM);
+        break;
+    }
+    case W_ROW: {
+        round_rect(dc, &r, 8, p->sel ? COL_BG2 : COL_BG1,
+                   p->sel ? COL_ACC : COL_LINE);
+        RECT tr = { r.left + 12, r.top + 6, r.right - 12, r.top + 26 };
+        text2(dc, p->str, &tr, COL_TXT, 12, p->sel, DT_LEFT);
+        RECT tr2 = { r.left + 12, r.top + 26, r.right - 12, r.bottom - 4 };
+        text2(dc, p->text2, &tr2, COL_DIM, 10, FALSE, DT_LEFT);
+        if (p->sel) {
+            RECT br = { r.left + 2, r.top + 8, r.left + 5, r.bottom - 8 };
+            fill(dc, br, COL_ACC);
+        }
+        break;
+    }
+    case W_CARD: {
+        round_rect(dc, &r, 10, p->sel ? COL_BG2 : COL_BG1,
+                   p->sel ? COL_ACC : COL_LINE);
+        RECT tr = { r.left + 14, r.top + 10, r.right - 14, r.top + 32 };
+        text2(dc, p->str, &tr, COL_TXT, 13, TRUE, DT_LEFT);
+        RECT tr2 = { r.left + 14, r.top + 32, r.right - 14, r.bottom - 8 };
+        RECT clip = tr2;
+        IntersectRect(&clip, &clip, &r);
+        text2(dc, p->text2, &tr2, COL_DIM, 11, FALSE, DT_LEFT);
+        break;
+    }
+    case W_SCENE: {
+        RECT im = { r.left + 6, r.top + 6, r.right - 6, r.bottom - 18 };
+        if (Prev_W() > 0) {
+            int saved = g_curScene;
+            if (p->scene != saved) Prev_Scene(p->scene);
+            HBITMAP bmp = NULL;
+            if (Prev_RenderHBITMAP(1, 0, &bmp)) {
+                HDC tdc = CreateCompatibleDC(NULL);
+                HBITMAP ob = (HBITMAP)SelectObject(tdc, bmp);
+                BitBlt(dc, im.left, im.top, im.right - im.left, im.bottom - im.top,
+                       tdc, 0, 0, SRCCOPY);
+                SelectObject(tdc, ob);
+                DeleteDC(tdc);
+            }
+            if (p->scene != saved) Prev_Scene(saved);
+        }
+        if (p->sel) {
+            HPEN p2 = CreatePen(PS_SOLID, 2, COL_ACC);
+            HPEN o2 = (HPEN)SelectObject(dc, p2);
+            Rectangle(dc, im.left - 1, im.top - 1, im.right + 1, im.bottom + 1);
+            SelectObject(dc, o2);
+            DeleteObject(p2);
+        }
+        break;
+    }
+    case W_SEARCH: {
+        round_rect(dc, &r, 8, p->focus ? COL_BG2 : COL_BG1,
+                   p->focus ? COL_ACC : COL_LINE);
+        RECT tr = { r.left + 10, r.top + (r.bottom - r.top) / 2 - 10,
+                    r.right - 10, r.bottom };
+        tr.bottom = tr.top + 20;
+        wchar_t tmp[160];
+        MultiByteToWideChar(CP_UTF8, 0, p->buf, -1, tmp, 160);
+        if (tmp[0]) text2(dc, tmp, &tr, COL_TXT, 12, FALSE, DT_LEFT);
+        else text2(dc, L"search\u2026", &tr, COL_DIM2, 12, FALSE, DT_LEFT);
+        break;
+    }
+    case W_TEXT: {
+        RECT tr = r;
+        text2(dc, p->str, &tr, COL_DIM, 10, FALSE, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        break;
+    }
+    case W_SWATCH: {
+        COLORREF c = (COLORREF)(intptr_t)p->arg1;
+        round_rect(dc, &r, 8, c, COL_LINE);
+        if (p->focus) {
+            HPEN p2 = CreatePen(PS_SOLID, 2, COL_ACC);
+            HPEN o2 = (HPEN)SelectObject(dc, p2);
+            Rectangle(dc, r.left - 1, r.top - 1, r.right + 1, r.bottom + 1);
+            SelectObject(dc, o2);
+            DeleteObject(p2);
+        }
+        break;
+    }
+    case W_SHAPES: {
+        /* strip of 9 mini crosshair previews */
+        int n = CXXH_NSHAPES;
+        int cw2 = (r.right - r.left) / n;
+        for (int i = 0; i < n; i++) {
+            RECT c = { r.left + i * cw2, r.top, r.left + (i + 1) * cw2, r.bottom };
+            if (i == p->num) round_rect(dc, &c, 6, COL_BG2, COL_ACC);
+            /* draw a tiny shape in the center */
+            int cxp = (c.left + c.right) / 2, cyp = (c.top + c.bottom) / 2;
+            HPEN p2 = CreatePen(PS_SOLID, 2, i == p->num ? COL_ACC : COL_DIM);
+            HPEN o2 = (HPEN)SelectObject(dc, p2);
+            if (i == CXXH_DOT) {
+                Ellipse(dc, cxp - 3, cyp - 3, cxp + 4, cyp + 4);
+            } else if (i == CXXH_CIRCLE) {
+                Ellipse(dc, cxp - 8, cyp - 8, cxp + 8, cyp + 8);
+            } else if (i == CXXH_SQUARE) {
+                Rectangle(dc, cxp - 8, cyp - 8, cxp + 8, cyp + 8);
+            } else if (i == CXXH_PLUS) {
+                Rectangle(dc, cxp - 8, cyp - 3, cxp + 8, cyp + 3);
+                Rectangle(dc, cxp - 3, cyp - 8, cxp + 3, cyp + 8);
+            } else if (i == CXXH_FOURDOT) {
+                Ellipse(dc, cxp - 10, cyp - 3, cxp - 6, cyp + 1);
+                Ellipse(dc, cxp + 6, cyp - 3, cxp + 10, cyp + 1);
+                Ellipse(dc, cxp - 3, cyp - 10, cxp + 1, cyp - 6);
+                Ellipse(dc, cxp - 3, cyp + 6, cxp + 1, cyp + 10);
+            } else if (i == CXXH_T) {
+                Rectangle(dc, cxp - 9, cyp - 7, cxp + 9, cyp - 3);
+                Rectangle(dc, cxp - 2, cyp - 3, cxp + 2, cyp + 8);
+            } else if (i == CXXH_TTYPE) {
+                Rectangle(dc, cxp - 9, cyp + 3, cxp + 9, cyp + 7);
+                Rectangle(dc, cxp - 2, cyp - 8, cxp + 2, cyp + 3);
+            } else if (i == CXXH_CHEVRON) {
+                MoveToEx(dc, cxp - 8, cyp + 4, NULL);
+                LineTo(dc, cxp, cyp - 6);
+                LineTo(dc, cxp + 8, cyp + 4);
+            } else {
+                MoveToEx(dc, cxp - 9, cyp, NULL); LineTo(dc, cxp + 9, cyp);
+                MoveToEx(dc, cxp, cyp - 9, NULL); LineTo(dc, cxp, cyp + 9);
+            }
+            SelectObject(dc, o2);
+            DeleteObject(p2);
+        }
+        break;
+    }
+    case W_SELECT: {
+        round_rect(dc, &r, 8, COL_BG1, COL_LINE);
+        RECT tr = { r.left + 10, r.top + (r.bottom - r.top) / 2 - 10,
+                    r.right - 24, r.bottom };
+        tr.bottom = tr.top + 20;
+        text2(dc, p->selLabel, &tr, COL_TXT, 11, FALSE, DT_LEFT);
+        HPEN p2 = CreatePen(PS_SOLID, 1, COL_DIM);
+        HPEN o2 = (HPEN)SelectObject(dc, p2);
+        MoveToEx(dc, r.right - 14, r.top + 8, NULL);
+        LineTo(dc, r.right - 8, r.bottom - 14);
+        LineTo(dc, r.right - 2, r.top + 8);
+        SelectObject(dc, o2);
+        DeleteObject(p2);
+        break;
+    }
+    }
+}
+
+/* ---------------- hit testing ---------------- */
+
+static int hit_widget(int x, int y)
+{
+    y += g_scroll;
+    for (int i = g_nw - 1; i >= 0; i--) {
+        Widget *p = &g_w[i];
+        if (p->type == W_LABEL || p->type == W_HEAD || p->type == W_DIM ||
+            p->type == W_TEXT || p->type == W_SPACER)
+            continue;
+        if (p->type == W_SHAPES) {
+            if (x >= p->r.left && x < p->r.right && y >= p->r.top && y < p->r.bottom) {
+                int n = CXXH_NSHAPES;
+                int idx = (x - p->r.left) / ((p->r.right - p->r.left) / n);
+                if (idx >= n) idx = n - 1;
+                return p->id * 10 + idx;     /* encode shape idx */
+            }
+            continue;
+        }
+        if (x >= p->r.left && x < p->r.right && y >= p->r.top && y < p->r.bottom)
+            return p->id;
+    }
+    return -1;
+}
+
+/* ---------------- shared UI state ---------------- */
+
+static int g_selGame = CXGAME_CS2;
+static int g_selLook[32];
+static int g_selMon = 0;
+static int g_selMode[8];
+static int g_colorMon = -1;      /* -1 = all monitors */
+static int g_curScene = CX_SCENE_FOREST;
+static int g_presetSel = -1;
+static float g_splitPos = 0.5f;
+static char  g_searchBuf[160];   /* utf-8 */
+
+static const wchar_t *MON_LABEL[9] = {
+    L"All monitors", L"Monitor 1", L"Monitor 2", L"Monitor 3", L"Monitor 4",
+    L"Monitor 5", L"Monitor 6", L"Monitor 7", L"Monitor 8"
+};
+
+static void sel_label(int m, int allMon)
+{
+    if (!allMon && m >= 0) {
+        const MonInfo *mi = MonGet(m);
+        if (mi) { lstrcpynW(g_w[g_nw - 1].selLabel, mi->name, 160); return; }
+    }
+    lstrcpynW(g_w[g_nw - 1].selLabel, MON_LABEL[0], 160);
+}
+
+/* ---------------- HOME ---------------- */
+
+static void build_home(void)
+{
+    int x = 28, y = 20;
+    int cw = 1110;
+
+    W_HEAD(-1, x, y, cw, 24, L"Overview", 0, 0);
+    y += 34;
+
+    /* system card */
+    {
+        const MonInfo *m0 = MonGet(0);
+        HdrState hs;
+        Hdr_Scan(&hs);
+        wchar_t body[160];
+        if (m0) {
+            wsprintfW(body,
+                L"%s \u00b7 %dx%d @ %d Hz \u00b7 %s",
+                m0->name, m0->res_w, m0->res_h, m0->hz,
+                hs.capable ? (hs.enabled ? L"HDR capable, ON" : L"HDR capable, off")
+                           : L"SDR display");
+        } else lstrcpyW(body, L"No display found");
+        W_CARD(-1, x, y, 545, 66, L"Display", body, 0);
+        x += 545 + 20;
+        wchar_t body2[160];
+        const char *g = MonGpuName();
+        wchar_t gw[128];
+        MultiByteToWideChar(CP_UTF8, 0, g, -1, gw, 127);
+        gw[127] = 0;
+        wsprintfW(body2, L"%s \u00b7 matrix %s \u00b7 ramp %s",
+                  gw,
+                  Eng_MagAvailable() ? L"layer ok" : L"layer unavailable",
+                  Eng_RampAvailable() ? L"ok" : L"blocked");
+        W_CARD(-1, x, y, 545, 66, L"Engine", body2, 0);
+        y += 66 + 18;
+    }
+
+    /* quick action row */
+    {
+        W_CARD(-1, x, y, 545, 92, L"Gaming mode",
+               L"One tap: gaming preset look + crosshair defaults for FPS play.", 0);
+        W_TOGGLE(A_HOME_GAMING, x + 16, y + 52, 200, L"On", &g_gaming);
+        W_CARD(-1, x + 565, y, 545, 92, L"Crosshair overlay",
+               L"Desktop crosshair (topmost, click-through). Never injected into games.", 0);
+        W_TOGGLE(A_HOME_XH, x + 565 + 16, y + 52, 200, L"On", &g_xh.on);
+        y += 92 + 18;
+    }
+
+    /* active look */
+    {
+        wchar_t body[160];
+        if (!g_look.enabled || CxLook_IsNeutral(&g_look))
+            lstrcpyW(body, L"Neutral \u2014 the display is untouched.");
+        else {
+            wsprintfW(body,
+                L"Sat %d \u00b7 Vib %d \u00b7 Temp %.0fK \u00b7 Bri %d \u00b7 Con %d \u00b7 Gam %.2f \u00b7 Shadows %d",
+                (int)g_look.sat, (int)g_look.vibrance, g_look.temperature,
+                (int)g_look.brightness, (int)g_look.contrast, g_look.gamma,
+                (int)g_look.shadows);
+        }
+        W_CARD(-1, x, y, 545, 78, L"Active look", body, 0);
+        W_BTN(A_HOME_RESET, x + 300, y + 46, 220, 26, L"Reset all changes", 0, 0);
+        y += 78 + 18;
+    }
+
+    /* backup + last known good */
+    {
+        W_CARD(-1, x, y, 545, 78, L"Backup / restore",
+               L"Snapshots of every setting in %APPDATA%\\ChromaX. Last known good restores automatically after a crash.", 0);
+        W_BTN(A_HOME_BACKUP, x + 10, y + 46, 150, 26, L"Backup now", 0, 0);
+        W_BTN(A_HOME_RESTORE_LKG, x + 170, y + 46, 200, 26, L"Restore last good", 0, 0);
+        x += 565;
+        W_CARD(-1, x, y, 545, 78, L"Phone control",
+               L"LAN HTTP with a random pairing token. No telemetry, ever.", 0);
+        W_BTN(A_HOME_PHONE, x + 10, y + 46, 130, 26, L"Toggle", 0, 0);
+        W_BTN(A_HOME_PHONE_TOKEN, x + 150, y + 46, 130, 26, L"Show token", 0, 0);
+        y += 78 + 18;
+    }
+
+    /* test patterns */
+    {
+        W_HEAD(-1, x, y, cw, 22, L"Test patterns", 0, 0);
+        y += 26;
+        W_BTN(A_HOME_TEST1, x, y, 260, 34, L"Display (grey + bars)", 0, 0);
+        W_BTN(A_HOME_TEST2, x + 272, y, 260, 34, L"Color reference", 0, 0);
+        W_BTN(A_HOME_TEST3, x + 544, y, 260, 34, L"HDR bright field", 0, 0);
+        W_BTN(A_HOME_TEST4, x + 816, y, 264, 34, L"Multi-monitor", 0, 0);
+        y += 34 + 18;
+    }
+
+    /* recent changes */
+    {
+        W_HEAD(-1, x, y, cw, 22, L"Recent changes", 0, 0);
+        y += 26;
+        int n = Main_AppliedHistoryCount();
+        if (n == 0) {
+            W_DIM(-1, x, y, cw, 20, L"Nothing applied yet \u2014 changes from sliders, presets and phones are listed here.", 0, 0);
+            y += 20;
+        }
+        for (int i = 0; i < n && i < 6; i++) {
+            CxLook lk;
+            wchar_t src[64] = { 0 }, ts[64] = { 0 };
+            int mon = -1;
+            Main_AppliedHistoryGet(i, &lk, src, 64, ts, 64, &mon);
+            wchar_t body[160];
+            wsprintfW(body, L"%s%s %d \u00b7 %s",
+                      ts, mon >= 0 ? L"  " : L"", mon + 1,
+                      CxLook_IsNeutral(&lk) || !lk.enabled ? L"reset" : L"look applied");
+            W_ROW(-1, x, y, cw, 34, src, body, 0);
+            y += 34 + 6;
+        }
+    }
+}
+
+/* ---------------- GAMES ---------------- */
+
 static void build_games(void)
 {
-    wadd(WT_HEAD, 0, 252, 92, 600, 40, L"Game looks");
-    wadd(WT_LABEL, 0, 252, 134, 700, 24, L"One look per game. Switches itself when the game opens.");
-    Widget *t = wadd(WT_TOGGLE, ID_T_DETECT, 252, 170, 420, 36, L"Switch automatically");
-    t->state = Prof_Detect();
+    int x = 28, y = 20;
+    int cw = 1110;
 
-    wadd(WT_DIV, 0, 252, 226, 948, 30, L"SAVED LOOKS");
-    int n = Prof_Count();
-    int row = 0;
-    for (int i = 0; i < n && row < 6; i++, row++) {
-        Profile *p = Prof_Get(i);
-        wchar_t txt[160];
-        wsprintfW(txt, L"%s", p->name);
-        if (p->exe[0]) wsprintfW(txt, L"%s   ·   %s", p->name, p->exe);
-        else wsprintfW(txt, L"%s   ·   always", p->name);
-        Widget *k = wadd(WT_ROW, ID_PROF_BASE + i, 252, 258 + row * 44, 948, 40, txt);
-        k->state = (g_selProf == i);
+    /* search + auto-apply */
+    W_SEARCH(A_SEARCH, x, y, 320, 34, L"search games\u2026", 0, 0);
+    W_GHOST(A_GAME_AUTO, x + 336, y, 330, 34, L"Auto-apply: on for detected game", 1, 0);
+    g_w[g_nw - 1].sel = Gw_AutoApply();
+    y += 48;
+
+    /* game cards: 3 columns */
+    {
+        int cardw = (cw - 40) / 3;
+        int hits[32], nh = 0;
+        if (g_searchBuf[0]) nh = CxGames_Search(g_searchBuf, hits, 32);
+        for (int i = 0; i < CxGames_Count(); i++) {
+            const CxGame *g = CxGames_Get(i);
+            if (nh > 0) {
+                int match = 0;
+                for (int k = 0; k < nh; k++) if (hits[k] == i) match = 1;
+                if (!match) continue;
+            }
+            int col = i % 3, row = i / 3;
+            int cx = x + col * (cardw + 20);
+            int cy = y + row * 86;
+            wchar_t nm[128], cat[64];
+            MultiByteToWideChar(CP_UTF8, 0, g->name, -1, nm, 127);
+            MultiByteToWideChar(CP_UTF8, 0, g->category, -1, cat, 63);
+            wchar_t body[80];
+            wsprintfW(body, L"%s \u00b7 %d looks%s", cat, g->nlooks,
+                      Main_IsFavorite(g->id) ? L"  \u2605" : L"");
+            W_CARD(A_GAME_SELECT + i * 100, cx, cy, cardw, 74,
+                   nm, body, g->id == g_selGame ? 1 : 0);
+        }
+        int rows = (CxGames_Count() + 2) / 3;
+        y += rows * 86 + 14;
     }
-    if (!n) wadd(WT_LABEL, 0, 252, 262, 900, 24, L"No profiles saved yet.");
 
-    wadd(WT_GHOST, ID_B_PROF_APPLY, 252, 534, 250, 44, L"Save current values here");
-    wadd(WT_GHOST, ID_B_PROF_DEL,   514, 534, 130, 44, L"Delete");
+    /* selected game detail */
+    {
+        const CxGame *g = CxGames_Get(g_selGame);
+        wchar_t nm[128];
+        MultiByteToWideChar(CP_UTF8, 0, g->name, -1, nm, 127);
+        W_HEAD(-1, x, y, cw, 24, nm, 0, 0);
+        y += 28;
+        W_DIM(-1, x, y, cw, 20, L"Pick a look, then apply it now or set it as the auto-apply look for this game.", 0, 0);
+        y += 30;
 
-    Prof_RunningScan();
-    wadd(WT_DIV, 0, 252, 600, 948, 30, L"RUNNING NOW — CLICK TO ADD");
-    int rn = Prof_RunningCount(), shown = 0;
-    int rstart = clampi(g_runScroll, 0, rn > 3 ? rn - 3 : 0);
-    for (int i = rstart; i < rn && shown < 3; i++) {
-        const wchar_t *exe = Prof_RunningGet(i);
-        if (Prof_FindExe(exe) >= 0) continue;
-        int slot = shown++;
-        Widget *k = wadd(WT_ROW, ID_PROF_RUN + slot, 252, 632 + slot * 40, 948, 36, exe);
-        k->flags = i; /* real running index */
+        int lw = (cw - 30) / 3;
+        for (int k = 0; k < g->nlooks; k++) {
+            int col = k % 3, row = k / 3;
+            int lx = x + col * (lw + 15);
+            int ly = y + row * 62;
+            wchar_t ln[128];
+            MultiByteToWideChar(CP_UTF8, 0, g->looks[k].name, -1, ln, 127);
+            wchar_t sub[80];
+            CxLook lk = g->looks[k].look;
+            wsprintfW(sub, L"sat %d \u00b7 temp %.0fK \u00b7 gamma %.2f",
+                      (int)lk.sat, lk.temperature, lk.gamma);
+            W_ROW(A_GAME_LOOK + k * 100, lx, ly, lw, 52,
+                  ln, sub, g_selLook[g_selGame] == k);
+        }
+        int rows = (g->nlooks + 2) / 3;
+        y += rows * 62 + 12;
+
+        W_PRI(A_GAME_APPLY, x, y, 180, 36, L"Apply look", 0, 0);
+        W_GHOST(A_GAME_AUTO, x + 196, y, 300, 36, L"Use on auto-apply for this game", 0, 0);
+        W_GHOST(A_GAME_FAV, x + 512, y, 180, 36,
+                Main_IsFavorite(g->id) ? L"\u2605 Unfavorite" : L"\u2606 Favorite", 0, 0);
     }
-    if (!shown) wadd(WT_LABEL, 0, 252, 636, 900, 24, L"Nothing new is running (or every window is already saved).");
 }
 
-/* -------- scenes panel -------- */
-static void build_scenes(void)
+/* ---------------- DISPLAY ---------------- */
+
+static void build_display(void)
 {
-    wadd(WT_HEAD, 0, 252, 92, 600, 40, L"Scenes");
-    wadd(WT_LABEL, 0, 252, 134, 800, 24,
-         L"One-click looks for the situations where colour actually wins.");
-    int cnt = 0;
-    const SceneDef *sc = Scene_List(&cnt);
-    for (int i = 0; i < cnt; i++) {
-        int col = i % 4, rw = i / 4;
-        int x = 252 + col * 242, y = 210 + rw * 168;
-        Widget *k = wadd(WT_SCENE, ID_SCENE_BASE + i, x, y, 222, 144, sc[i].name);
-        wsprintfW(k->val, L"sat %d · con %+d", (int)sc[i].look.sat, (int)sc[i].look.con);
-        k->state = 0;
+    int x = 28, y = 20;
+    int cw = 1110;
+
+    W_SELECT(A_MON_SELECT, x, y, 420, 34, L"Monitor", 0, 0);
+    sel_label(g_selMon, 0);
+    y += 48;
+
+    for (int m = 0; m < MonCount() && m < 4; m++) {
+        if (m != g_selMon) continue;
+        const MonInfo *mi = MonGet(m);
+        HdrState hs;
+        Hdr_ScanFor(m, &hs);
+
+        wchar_t body[160];
+        wsprintfW(body,
+                  L"%dx%d @ %d Hz \u00b7 %d bpc \u00b7 ~%d DPI%s%s",
+                  mi->res_w, mi->res_h, mi->hz, mi->bpc, mi->dpi,
+                  mi->primary ? L" \u00b7 primary" : L"",
+                  mi->portrait ? L" \u00b7 portrait" : L"");
+        W_CARD(-1, x, y, 640, 60, mi->name, body, 0);
+        x += 640 + 20;
+        W_CARD(-1, x, y, 450, 60, L"HDR",
+               hs.capable
+                   ? (hs.enabled ? L"Capable \u2014 currently ON" : L"Capable \u2014 currently OFF")
+                   : (hs.supported ? L"Not supported by this driver/display"
+                                   : L"Advanced-colour API not available on this OS"),
+               0);
+        if (hs.capable)
+            W_BTN(A_HDR_TOGGLE, x + 10, y + 32, 170, 24,
+                  hs.enabled ? L"Turn HDR off" : L"Turn HDR on", 0, 0);
+        W_BTN(A_HDR_OPEN, x + 190, y + 32, 170, 24, L"Windows HDR settings", 0, 0);
+        y += 60 + 16;
+
+        /* modes */
+        W_HEAD(-1, x, y, cw, 20, L"Resolution / refresh (only modes this monitor actually reports)", 0, 0);
+        y += 24;
+        int n = Modes_CountFor(m);
+        if (n == 0) {
+            W_DIM(-1, x, y, cw, 20, L"No modes reported.", 0, 0);
+            y += 24;
+        } else {
+            int colw = (cw - 60) / 4;
+            for (int i = 0; i < n && i < 24; i++) {
+                ModeInfo *md = Modes_GetFor(m, i);
+                int col = i % 4, row = i / 4;
+                int mx = x + col * (colw + 20);
+                int my = y + row * 46;
+                wchar_t lbl[40], sub[40];
+                wsprintfW(lbl, L"%dx%d", md->w, md->h);
+                wsprintfW(sub, L"%d Hz%s%s", md->hz,
+                          md->native ? L"  current" : L"",
+                          md->preferred ? L"  preferred" : L"");
+                W_ROW(A_MODE_SELECT + i * 100 + m * 10000, mx, my, colw, 40,
+                      lbl, sub, g_selMode[m] == i);
+            }
+            int rows = (n < 24 ? n : 24 + 2) / 4;
+            y += rows * 46 + 10;
+            W_PRI(A_MODE_APPLY, x, y, 200, 34, L"Apply to this monitor", 0, 0);
+            W_DIM(-1, x + 220, y + 8, cw - 220, 20,
+                  L"Pre-tested before applying; Windows keeps its own revert prompt; ChromaX rolls back on failure.", 0, 0);
+            y += 44;
+        }
     }
-    wadd(WT_DIV, 0, 252, 552, 948, 30, L"WHAT A SCENE CHANGES");
-    wadd(WT_LABEL, 0, 252, 594, 948, 60,
-         L"Saturation, brightness, contrast, temperature and gamma in one click. The values land in your Display sliders, so you can nudge them afterwards — scenes are a starting point, not a cage.");
-    wadd(WT_LABEL, 0, 252, 664, 948, 44,
-         L"Scene switches with a game too: save a scene into a profile on the Game looks tab and the app applies it when that game opens.");
+
+    /* aspect presets */
+    {
+        W_HEAD(-1, x, y, cw, 20, L"Ratio presets (applied to the selected monitor)", 0, 0);
+        y += 24;
+        for (int i = 0; i < CxDispPresets_Count(); i++) {
+            const CxDispPreset *d = CxDispPresets_Get(i);
+            int bx = x + (i % 7) * 158;
+            int by = y + (i / 7) * 40;
+            wchar_t wname[96];
+            MultiByteToWideChar(CP_UTF8, 0, d->name, -1, wname, 95);
+            lstrcatW(wname, L" ");
+            wchar_t rn[8];
+            MultiByteToWideChar(CP_UTF8, 0, d->ratio, -1, rn, 7);
+            lstrcatW(wname, rn);
+            W_BTN(A_PRESET_RATIO + i * 100, bx, by, 148, 32, wname, 0, 0);
+        }
+        y += 2 * 40 + 10;
+    }
 }
 
-/* -------- crosshair panel -------- */
-static void build_cross(void)
+/* ---------------- COLOR ---------------- */
+
+static void build_color(void)
 {
-    wadd(WT_HEAD, 0, 252, 92, 600, 40, L"Crosshair");
-    wadd(WT_LABEL, 0, 252, 134, 820, 24,
-         L"Drawn on top of your screen, not inside the game. Stays off until you turn it on.");
-    Widget *t = wadd(WT_TOGGLE, ID_T_XH, 252, 168, 360, 36, L"Crosshair overlay");
-    t->state = g_xh.on;
+    int x = 28, y = 20;
+    int cw = 1110;
 
-    wadd(WT_DIV, 0, 252, 222, 948, 30, L"SHAPE");
-    static const int shapes[] = { ID_XH_CROSS, ID_XH_DOT, ID_XH_CIRCLE,
-                                  ID_XH_CHEVRON, ID_XH_T, ID_XH_TTYPE };
-    static const wchar_t *sn[] = { L"Cross", L"Dot", L"Circle", L"Chevron", L"T", L"T-type" };
-    for (int i = 0; i < 6; i++) {
-        Widget *k = wadd(WT_SHAPE, shapes[i], 252 + i * 158, 256, 142, 84, sn[i]);
-        k->state = (g_xh.shape == XH_CROSS + i);
+    /* preview */
+    {
+        W_HEAD(-1, x, y, 620, 20, L"Live preview (exact engine maths)", 0, 0);
+        int pw = 620, ph = 348;
+        W_SCENE(-1, x, y + 26, pw, ph, L"", 0, 0);
+        g_w[g_nw - 1].scene = g_curScene;
+        /* scene picker chips */
+        for (int s = 0; s < CX_N_SCENE; s++) {
+            int cx2 = x + pw + 12 + (s % 3) * 132;
+            int cy2 = y + 26 + (s / 3) * 88;
+            W_SCENE(A_SCENE + s * 100, cx2, cy2, 124, 80, L"", s, 0);
+            g_w[g_nw - 1].scene = s;
+        }
+        y += 26 + ph + 14;
     }
 
-    sl(wadd(WT_SLIDER, ID_XH_SIZE,  252, 366, 456, 74, L"Size"));
-    sl(wadd(WT_SLIDER, ID_XH_GAP,   744, 366, 456, 74, L"Gap"));
-    sl(wadd(WT_SLIDER, ID_XH_THICK, 252, 456, 456, 74, L"Thickness"));
-    sl(wadd(WT_SLIDER, ID_XH_DOTOP, 744, 456, 456, 74, L"Dot opacity (dot shape)"));
-
-    Widget *to = wadd(WT_TOGGLE, ID_T_OUTLINE, 252, 546, 360, 36, L"Outline");
-    to->state = g_xh.outline;
-
-    static const COLORREF cols[10] = {
-        RGB(255,255,255), RGB(0xC6,0xFF,0x3D), RGB(0x4F,0xE3,0xFF), RGB(0xFF,0x4F,0xE3),
-        RGB(0xFF,0x9E,0x3D), RGB(0xFF,0xF2,0x3D), RGB(0xFF,0x4F,0x4F), RGB(0x4F,0x7B,0xFF),
-        RGB(0x3D,0xFF,0xB0), RGB(0,0,0) };
-    wadd(WT_LABEL, 0, 252, 600, 300, 22, L"SHAPE COLOUR");
-    for (int i = 0; i < 10; i++) {
-        Widget *k = wadd(WT_SWATCH, ID_SWATCH_BASE + i, 252 + i * 54, 628, 44, 36, NULL);
-        k->state = (g_xh.color == cols[i]);
-        wsprintfW(k->val, L"%d", (int)cols[i]);
+    /* system colour */
+    {
+        W_HEAD(-1, x, y, cw, 20, L"System color (whole desktop \u2014 colour-matrix layer)", 0, 0);
+        y += 24;
+        W_TOGGLE(A_COLOR_MASTER, x, y, 240, L"Enabled", &g_look.enabled);
+        W_SLIDER(A_SLIDER, x, y + 34, 540, L"Saturation (0-300%)",
+                 &g_look.sat, 0, 300);
+        W_SLIDER(A_SLIDER, x + 560, y + 34, 540, L"Vibrance", &g_look.vibrance, 0, 300);
+        W_SLIDER(A_SLIDER, x, y + 78, 540, L"Temperature (K)", &g_look.temperature, 3000, 10000);
+        W_SLIDER(A_SLIDER, x + 560, y + 78, 540, L"Tint", &g_look.tint, -100, 100);
+        W_SLIDER(A_SLIDER, x, y + 122, 540, L"Intensity", &g_look.intensity, 0, 300);
+        W_SLIDER(A_SLIDER, x + 560, y + 122, 540, L"Hue shift", &g_look.hue, -60, 60);
+        W_GHOST(A_COLOR_RESET_SYS, x, y + 170, 200, 24, L"Reset system color", 0, 0);
+        y += 170 + 20;
     }
-    wadd(WT_LABEL, 0, 252, 678, 300, 22, L"OUTLINE COLOUR");
-    for (int i = 0; i < 10; i++) {
-        Widget *k = wadd(WT_SWATCH, ID_SWATCH_O + i, 252 + i * 54, 706, 44, 36, NULL);
-        k->state = (g_xh.ocolor == cols[i]);
-        wsprintfW(k->val, L"%d", (int)cols[i]);
+
+    /* per monitor */
+    {
+        W_HEAD(-1, x, y, cw, 20, L"Per-monitor curves (gamma ramp on the selected monitor)", 0, 0);
+        y += 24;
+        W_SELECT(A_COLOR_MON, x, y, 300, 34, L"Target", 0, 0);
+        if (g_colorMon < 0) lstrcpynW(g_w[g_nw - 1].selLabel, MON_LABEL[0], 160);
+        else sel_label(g_colorMon, 1);
+        W_SLIDER(A_SLIDER, x, y + 44, 360, L"Brightness", &g_look.brightness, 0, 200);
+        W_SLIDER(A_SLIDER, x + 380, y + 44, 360, L"Contrast", &g_look.contrast, 0, 200);
+        W_SLIDER(A_SLIDER, x + 760, y + 44, 350, L"Gamma", &g_look.gamma, 0.5, 2.5);
+        W_SLIDER(A_SLIDER, x, y + 88, 360, L"Shadows", &g_look.shadows, 0, 200);
+        W_SLIDER(A_SLIDER, x + 380, y + 88, 360, L"Highlights", &g_look.highlights, 0, 200);
+        W_SLIDER(A_SLIDER, x + 760, y + 88, 350, L"Black level", &g_look.blacklevel, 0, 200);
+        W_SLIDER(A_SLIDER, x, y + 132, 360, L"White point", &g_look.whitepoint, 0, 200);
+        W_SLIDER(A_SLIDER, x + 380, y + 132, 360, L"Clarity", &g_look.clarity, 0, 200);
+        W_SLIDER(A_SLIDER, x + 760, y + 132, 350, L"Dehaze", &g_look.dehaze, 0, 200);
+        W_SLIDER(A_SLIDER, x, y + 176, 360, L"Red", &g_look.red, 0, 200);
+        W_SLIDER(A_SLIDER, x + 380, y + 176, 360, L"Green", &g_look.green, 0, 200);
+        W_SLIDER(A_SLIDER, x + 760, y + 176, 350, L"Blue", &g_look.blue, 0, 200);
+        W_GHOST(A_COLOR_RESET_MON, x, y + 224, 200, 24, L"Reset monitor curves", 0, 0);
+        y += 224 + 16;
     }
-    wadd(WT_LABEL, 0, 812, 628, 390, 44, L"The real crosshair sits at the centre of your screen while this tab is open.");
+
+    /* quick looks */
+    {
+        W_HEAD(-1, x, y, cw, 20, L"Quick looks (global)", 0, 0);
+        y += 24;
+        for (int i = 0; i < CxLooks_Count() && i < 10; i++) {
+            const CxLookDef *d = CxLooks_Get(i);
+            int bx = x + (i % 5) * 224;
+            int by = y + (i / 5) * 40;
+            wchar_t wname[96];
+            MultiByteToWideChar(CP_UTF8, 0, d->name, -1, wname, 95);
+            W_BTN(A_LOOK_CHIP + i * 100, bx, by, 212, 32, wname, 0, 0);
+        }
+        y += 2 * 40 + 8;
+    }
+    (void)g_splitPos;
+
+    W_TEXT(x, y, cw, 40,
+           L"Note: sharpness & per-pixel vibrance are shown in the preview; the live-display stages "
+           L"(matrix + gamma ramp) cannot express spatial filtering. ChromaX does not claim effects it cannot apply.");
+    y += 44;
+    (void)cw;
 }
 
-/* -------- modes panel -------- */
-static void build_modes(void)
+/* ---------------- CROSSHAIR ---------------- */
+
+static void build_crosshair(void)
 {
-    wadd(WT_HEAD, 0, 252, 92, 700, 40, L"Resolution & refresh");
-    wadd(WT_LABEL, 0, 252, 134, 820, 24,
-         L"Modes, refresh rate and stretched 4:3 — same tab as your colours.");
+    int x = 28, y = 20;
+    int cw = 1110;
 
-    ModeInfo cur;
-    Modes_Current(&cur);
-    wchar_t now[96];
-    wsprintfW(now, L"Now: %d×%d @ %d Hz%s", cur.w, cur.h, cur.hz, cur.native ? L"  (native)" : L"");
-    Widget *card = wadd(WT_CARD_INFO, 0, 252, 170, 560, 56, now);
-    lstrcpyW(card->val, L"Windows asks you to keep a new mode — or it reverts.");
+    W_HEAD(-1, x, y, cw, 22, L"Crosshair overlay", 0, 0);
+    y += 26;
+    W_DIM(-1, x, y, cw, 20,
+          L"Drawn on a topmost, click-through desktop window. Nothing is injected into games; the overlay is a plain OS window.", 0, 0);
+    y += 30;
 
-    int n = Modes_Count();
-    int vis = 9;
-    if (g_modeScroll > n - vis) g_modeScroll = clampi(n - vis, 0, 999);
-    for (int r = 0; r < vis; r++) {
-        int i = g_modeScroll + r;
-        ModeInfo *m = Modes_Get(i);
-        if (!m) break;
-        wchar_t txt[80];
-        const wchar_t *tag = m->native ? L"  ·  native" : L"";
-        if (m->w * 9 == m->h * 16)
-            wsprintfW(txt, L"%d×%d @ %d Hz%s  ·  16:9", m->w, m->h, m->hz, tag);
-        else if ((long)m->w * 3 == (long)m->h * 4)
-            wsprintfW(txt, L"%d×%d @ %d Hz%s  ·  4:3 stretched", m->w, m->h, m->hz, tag);
-        else
-            wsprintfW(txt, L"%d×%d @ %d Hz%s", m->w, m->h, m->hz, tag);
-        Widget *k = wadd(WT_ROW, ID_MODE_BASE + r, 252, 244 + r * 44, 948, 40, txt);
-        k->state = (g_selMode == i);
-        k->flags = i;
+    W_TOGGLE(A_XH_ON, x, y, 260, L"Show crosshair", &g_xh.on);
+    W_SHAPES(A_XH_SHAPE, x + 280, y, 560, 36, L"Shape", g_xh.shape, 0);
+    y += 52;
+
+    W_slider_i(A_XH_SIZE, x, y, 340, L"Size", &g_xh.size, 6, 64);
+    W_slider_i(A_XH_SIZE + 1, x + 360, y, 340, L"Gap", &g_xh.gap, 0, 24);
+    W_slider_i(A_XH_SIZE + 2, x + 720, y, 340, L"Thickness", &g_xh.thick, 1, 10);
+    y += 52;
+    W_slider_i(A_XH_SIZE + 3, x, y, 340, L"Opacity %", &g_xh.opacity, 5, 100);
+    W_slider_i(A_XH_SIZE + 4, x + 360, y, 340, L"Rotation \u00b0", &g_xh.rotation, 0, 359);
+    W_SELECT(A_XH_MON, x + 720, y + 6, 340, 30, L"Monitor", 0, 0);
+    if (g_xh.monitor < 0) lstrcpynW(g_w[g_nw - 1].selLabel, MON_LABEL[0], 160);
+    else sel_label(g_xh.monitor, 1);
+    y += 52;
+    W_TOGGLE(A_XH_OUTLINE, x, y, 260, L"Outline", &g_xh.outline);
+    W_TOGGLE(A_XH_DOT, x + 280, y, 260, L"Center dot", &g_xh.dot);
+    W_SWATCH(A_XH_COLOR, x + 560, y + 2, 40, 24, L"Color", 0, 0);
+    g_w[g_nw - 1].arg1 = (int)(intptr_t)g_xh.color;
+    W_SWATCH(A_XH_OCOLOR, x + 612, y + 2, 40, 24, L"Outline", 0, 0);
+    g_w[g_nw - 1].arg1 = (int)(intptr_t)g_xh.ocolor;
+    y += 44;
+
+    /* presets */
+    W_HEAD(-1, x, y, cw, 20, L"Crosshair presets", 0, 0);
+    y += 24;
+    for (int i = 0; i < CxXhPresets_Count(); i++) {
+        const CxXhPreset *p = CxXhPresets_Get(i);
+        int bx = x + (i % 5) * 224;
+        int by = y + (i / 5) * 40;
+        wchar_t wname[96];
+        MultiByteToWideChar(CP_UTF8, 0, p->name, -1, wname, 95);
+        W_BTN(A_XH_PRESET + i * 100, bx, by, 212, 32, wname, 0, 0);
     }
-
-    wadd(WT_PRIMARY, ID_B_MODE_APPLY, 252, 660, 220, 46, L"Apply mode");
-    wadd(WT_GHOST, ID_B_MODE_NATIVE, 486, 660, 200, 46, L"Back to native");
-    wadd(WT_GHOST, ID_B_OPENHDR, 700, 660, 300, 46, L"HDR — open Windows settings");
-    wadd(WT_LABEL, 0, 252, 724, 948, 40,
-         L"Scroll the list with the wheel. Nothing here patches a game — it asks Windows for a display mode, exactly like Settings does.");
 }
 
-/* -------- settings panel -------- */
-static void build_set(void)
+/* ---------------- MONITORS ---------------- */
+
+static void build_monitors(void)
 {
-    wadd(WT_HEAD, 0, 252, 92, 600, 40, L"Settings");
-    wadd(WT_LABEL, 0, 252, 134, 820, 24, L"Everything is on by default. Nothing is locked.");
+    int x = 28, y = 20;
+    int cw = 1110;
 
-    wadd(WT_DIV, 0, 252, 176, 948, 30, L"STARTUP");
-    Widget *t1 = wadd(WT_TOGGLE, ID_T_STARTWIN, 252, 214, 460, 36, L"Start with Windows");
-    t1->state = g_startwin;
+    W_HEAD(-1, x, y, cw, 22, L"Connected displays", 0, 0);
+    y += 26;
 
-    wadd(WT_DIV, 0, 252, 274, 948, 30, L"PHONE CONTROL");
-    Widget *t2 = wadd(WT_TOGGLE, ID_T_PHONE, 252, 312, 460, 36, L"Phone panel on this Wi-Fi");
-    t2->state = g_phoneon;
-    if (g_phoneon) {
-        wchar_t u[160];
-        wsprintfW(u, L"%s", Phone_Summary());
-        wadd(WT_LABEL, 0, 252, 356, 700, 24, u);
-        wadd(WT_GHOST, ID_B_PHONEURL, 640, 350, 190, 40, L"Copy link");
-    } else {
-        wadd(WT_LABEL, 0, 252, 356, 700, 24, L"Off. Turn on and the link shows here — same Wi-Fi only.");
+    for (int m = 0; m < MonCount() && m < 4; m++) {
+        const MonInfo *mi = MonGet(m);
+        HdrState hs;
+        Hdr_ScanFor(m, &hs);
+
+        W_SELECT(A_MON_SELECT, x, y, 420, 34, L"Select", 0, 0);
+        sel_label(m, 1);
+        if (m == g_selMon) {
+            y += 44;
+            W_CARD(-1, x, y, 560, 118, mi->name,
+                   L"", 0);
+            wchar_t l1[160], l2[160], l3[160];
+            wsprintfW(l1, L"EDID identity: %s", mi->id);
+            wsprintfW(l2, L"%dx%d @ %d Hz \u00b7 %d bpc \u00b7 ~%d DPI%s%s",
+                      mi->res_w, mi->res_h, mi->hz, mi->bpc, mi->dpi,
+                      mi->primary ? L" \u00b7 primary" : L"",
+                      mi->portrait ? L" \u00b7 portrait" : L"");
+            wsprintfW(l3, L"physical %dx%d mm \u00b7 position (%d, %d) \u00b7 HDR: %s",
+                      mi->width_mm, mi->height_mm, mi->x, mi->y,
+                      hs.capable ? (hs.enabled ? L"on" : L"capable") : L"n/a");
+            W_DIM(-1, x + 14, y + 30, 530, 18, l1, 0, 0);
+            W_DIM(-1, x + 14, y + 52, 530, 18, l2, 0, 0);
+            W_DIM(-1, x + 14, y + 74, 530, 18, l3, 0, 0);
+            x += 580;
+            W_HEAD(-1, x, y, 500, 20, L"Modes reported by this monitor", 0, 0);
+            int n = Modes_CountFor(m);
+            int colw = 232;
+            for (int i = 0; i < n && i < 8; i++) {
+                ModeInfo *md = Modes_GetFor(m, i);
+                wchar_t lbl[40], sub[40];
+                wsprintfW(lbl, L"%dx%d", md->w, md->h);
+                wsprintfW(sub, L"%d Hz%s", md->hz, md->native ? L" \u00b7 current" : L"");
+                W_ROW(A_MODE_SELECT + i * 100 + m * 10000, x, y + 26 + i * 40,
+                      colw, 36, lbl, sub, g_selMode[m] == i);
+            }
+            if (n > 8) {
+                W_DIM(-1, x, y + 26 + 8 * 40, 400, 16,
+                      L"\u2026(open the Display page for the full list)", 0, 0);
+            }
+            W_PRI(A_MODE_APPLY, x, y + 26 + (n < 8 ? n : 8) * 40 + 8, 200, 32,
+                  L"Apply to this monitor", 0, 0);
+            y += 26 + (n < 8 ? 8 : n) * 40 + 50;
+        } else {
+            y += 44;
+        }
+        x = 28;
     }
-
-    wadd(WT_DIV, 0, 252, 412, 948, 30, L"ABOUT");
-    wadd(WT_LABEL, 0, 252, 452, 948, 24,
-         L"ChromaX v" CX_VERSION " · Windows 10/11 · single portable exe · no installer, no admin.");
-    wadd(WT_LABEL, 0, 252, 484, 948, 24,
-         L"No account, no telemetry, no phone-home. Settings live in a plain config.ini next to your app data.");
-    wadd(WT_LABEL, 0, 252, 516, 948, 24,
-         L"What it never does: read game memory · edit game files · inject code · install a driver.");
-
-    wadd(WT_GHOST, ID_B_OPENFOLDER, 252, 566, 240, 44, L"Open settings folder");
-
-    wadd(WT_DIV, 0, 252, 640, 948, 30, L"THE SHORT VERSION");
-    wadd(WT_LABEL, 0, 252, 680, 948, 60,
-         L"Every feature — saturation to 300%, scenes, per-game switching, crosshair, modes, phone control — is in this one free binary. There is no upgrade screen because there is nothing to upgrade to.");
 }
 
-static void build(void)
+/* ---------------- AUTOMATION ---------------- */
+
+static void build_automation(void)
+{
+    int x = 28, y = 20;
+    int cw = 1110;
+
+    W_HEAD(-1, x, y, cw, 22, L"Game watch", 0, 0);
+    y += 26;
+    W_DIM(-1, x, y, cw, 20,
+          L"Foreground detection is event-driven (WinEvents): no polling, no re-apply loops. A game look applies once per foreground change, debounced.", 0, 0);
+    y += 34;
+    W_toggle(A_GAME_AUTO, x, y, 300, L"Auto-apply detected game looks",
+             &g_settings.autoApply);
+    W_toggle(A_AUTO_RESTORE, x + 320, y, 300, L"Restore my look when I leave a game",
+             &g_settings.restoreOnExit);
+    W_slider_i(A_SLIDER, x, y + 40, 420, L"Apply delay (ms)",
+               &g_settings.delayMs, 0, 5000);
+    y += 96;
+
+    wchar_t fg[96];
+    lstrcpynW(fg, Gw_ForegroundExe() ? Gw_ForegroundExe() : L"", 96);
+    W_DIM(-1, x, y, cw, 20, L"Current foreground: ", 0, 0);
+    y += 22;
+    if (fg[0]) W_LABEL(-1, x, y, cw, 18, fg, 0, 0);
+    else W_DIM(-1, x, y, cw, 18, L"(none detected)", 0, 0);
+    y += 30;
+
+    /* hotkeys */
+    W_HEAD(-1, x, y, cw, 20, L"Global hotkeys", 0, 0);
+    y += 24;
+    const wchar_t *hknames[4] = { L"Toggle crosshair", L"Reset all changes",
+                                  L"Toggle gaming mode", L"Show/hide ChromaX" };
+    for (int i = 0; i < 4; i++) {
+        W_LABEL(-1, x, y, 420, 26, hknames[i], 0, 0);
+        W_GHOST(A_AUTO_HK + i * 100, x + 440, y - 2, 200, 30,
+                Main_HotkeyText(i), 0, 0);
+        y += 38;
+    }
+    W_DIM(-1, x, y, cw, 20,
+          L"Click a hotkey to capture a new combination (mod + key). Conflicts with other apps are detected and reported.", 0, 0);
+    y += 30;
+
+    /* phone */
+    W_HEAD(-1, x, y, cw, 20, L"Phone control (LAN)", 0, 0);
+    y += 24;
+    W_CARD(-1, x, y, cw, 66, L"HTTP over your local network",
+           Phone_Running() ? L"Running \u2014 see Settings for the token." : L"Stopped.", 0);
+    W_GHOST(A_SET_PHONE, x + 10, y + 36, 160, 24,
+            Phone_Running() ? L"Stop" : L"Start", 0, 0);
+    W_GHOST(A_SET_PHONE_TOKEN, x + 180, y + 36, 180, 24, L"Show token", 0, 0);
+    y += 90;
+}
+
+/* ---------------- TOOLS ---------------- */
+
+static void build_tools(void)
+{
+    int x = 28, y = 20;
+    int cw = 1110;
+
+    W_HEAD(-1, x, y, cw, 22, L"Backup & restore", 0, 0);
+    y += 26;
+    W_DIM(-1, x, y, cw, 20,
+          L"Every snapshot is a validated JSON file in %APPDATA%\\ChromaX\\backups. The newest clean snapshot is the last-known-good used for crash recovery.", 0, 0);
+    y += 30;
+    W_PRI(A_TL_BACKUP, x, y, 190, 36, L"Backup now", 0, 0);
+    W_BTN(A_TL_RESTORE_BK, x + 206, y, 190, 36, L"Restore newest", 0, 0);
+    W_GHOST(A_TL_RESTORE, x + 412, y, 230, 36, L"Restore last known good", 0, 0);
+    y += 50;
+
+    /* backup list */
+    int nb = 0;
+    WIN32_FIND_DATAW fd;
+    wchar_t pat[MAX_PATH];
+    wsprintfW(pat, L"%s\\backups\\*.json", g_appdata);
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (nb >= 5) break;
+            wchar_t dts[64];
+            FILETIME ft = fd.ftLastWriteTime;
+            SYSTEMTIME st;
+            FileTimeToSystemTime(&ft, &st);
+            wsprintfW(dts, L"%04d-%02d-%02d %02d:%02d  \u00b7  %s",
+                      st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, fd.cFileName);
+            W_ROW(A_TL_BK_LIST + nb * 100, x, y, 700, 40, dts, L"click to restore",
+                  0);
+            nb++;
+            y += 46;
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    if (nb == 0) {
+        W_DIM(-1, x, y, cw, 20, L"No backups yet.", 0, 0);
+        y += 26;
+    }
+    y += 14;
+
+    /* test patterns */
+    W_HEAD(-1, x, y, cw, 22, L"Test patterns", 0, 0);
+    y += 26;
+    W_DIM(-1, x, y, cw, 20, L"Full-screen reference patterns (Esc or click to close):", 0, 0);
+    y += 26;
+    W_BTN(A_TL_PATTERN, x, y, 250, 34, L"Display: grey steps + bars", 0, 0);
+    W_BTN(A_TL_PATTERN + 1, x + 262, y, 250, 34, L"Color: accuracy grid", 0, 0);
+    W_BTN(A_TL_PATTERN + 2, x + 524, y, 250, 34, L"HDR: bright field", 0, 0);
+    W_BTN(A_TL_PATTERN + 3, x + 786, y, 290, 34, L"Multi-monitor", 0, 0);
+    y += 50;
+
+    /* diagnostics */
+    W_HEAD(-1, x, y, cw, 22, L"Diagnostics", 0, 0);
+    y += 26;
+    W_BTN(A_TL_DIAG, x, y, 260, 34, L"Export diagnostic report\u2026", 0, 0);
+    W_BTN(A_TL_LOG, x + 272, y, 220, 34, L"Show log", 0, 0);
+    W_GHOST(A_TL_CLEARLOG, x + 504, y, 140, 34, L"Clear log", 0, 0);
+    W_GHOST(A_TL_DATA, x + 656, y, 200, 34, L"Open data folder", 0, 0);
+    y += 50;
+}
+
+/* ---------------- SETTINGS ---------------- */
+
+static void build_settings(void)
+{
+    int x = 28, y = 20;
+    int cw = 1110;
+
+    W_HEAD(-1, x, y, cw, 22, L"General", 0, 0);
+    y += 26;
+    W_toggle(A_SET_STARTWIN, x, y, 400, L"Start with Windows", &g_settings.startWin);
+    y += 34;
+    W_toggle(A_SET_TRAY, x, y, 400, L"Minimize to tray", &g_settings.minTray);
+    y += 34;
+    W_toggle(A_SET_NOTIFY, x, y, 400, L"Tray notifications", &g_settings.trayNotify);
+    y += 40;
+
+    W_HEAD(-1, x, y, cw, 22, L"Phone control", 0, 0);
+    y += 26;
+    W_card(-1, x, y, cw, 78, L"LAN pairing",
+           Phone_Running() ? L"Running." : L"Stopped. Start it from Home or Automation.", 0);
+    if (Phone_Running()) {
+        wchar_t sum[128] = { 0 }, tok[64] = { 0 };
+        {
+            wchar_t *s = Phone_Summary();
+            lstrcpynW(sum, s, 128);
+            free(s);
+            lstrcpynW(tok, Phone_Token(), 64);
+        }
+        wchar_t info[256];
+        wsprintfW(info, L"%s    token: %s", sum, tok);
+        W_DIM(-1, x + 12, y + 28, cw - 24, 18, info, 0, 0);
+    }
+    y += 92;
+
+    W_HEAD(-1, x, y, cw, 22, L"Privacy", 0, 0);
+    y += 26;
+    W_card(-1, x, y, cw, 108, L"Local only \u2014 always",
+           L"No telemetry, no accounts, no network calls except your own LAN. "
+           L"All data lives in %APPDATA%\\ChromaX: config.json, presets\\, "
+           L"backups\\, phonetoken.txt, lastapplied.json, chromax.log.", 0);
+    y += 122;
+
+    W_HEAD(-1, x, y, cw, 22, L"About", 0, 0);
+    y += 26;
+    W_card(-1, x, y, cw, 96, L"ChromaX 2.0.0",
+           L"Free and open. Display control via the OS colour-matrix layer, "
+           L"per-monitor gamma ramps, and the standard display-settings APIs. "
+           L"No game injection, no memory access, no anti-cheat interaction.", 0);
+    y += 110;
+    W_GHOST(A_SET_RESET, x, y, 300, 36, L"Reset all app settings", 0, 0);
+    y += 50;
+    (void)cw;
+}
+
+static void build_presets(void)
+{
+    int x = 28, y = 20;
+    int cw = 1110;
+
+    W_HEAD(-1, x, y, cw, 22, L"Saved presets", 0, 0);
+    y += 26;
+
+    /* name + save */
+    W_SEARCH(A_SEARCH, x, y, 300, 34, L"preset name\u2026", 0, 0);
+    W_PRI(A_PRESET_SAVE, x + 312, y, 200, 34, L"Save current state", 0, 0);
+    W_GHOST(A_PRESET_IMPORT, x + 524, y, 170, 34, L"Import file", 0, 0);
+    W_GHOST(A_PRESET_EXPORT, x + 706, y, 170, 34, L"Export current", 0, 0);
+    y += 48;
+
+    /* list */
+    int n = 0;
+    WIN32_FIND_DATAW fd;
+    wchar_t pat[MAX_PATH];
+    wsprintfW(pat, L"%s\\presets\\*.json", g_appdata);
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (n >= 8) break;
+            wchar_t base[64];
+            lstrcpynW(base, fd.cFileName, 64);
+            base[58] = 0;
+            wchar_t dts[40];
+            FILETIME ft = fd.ftLastWriteTime;
+            SYSTEMTIME st;
+            FileTimeToSystemTime(&ft, &st);
+            wsprintfW(dts, L"saved %02d-%02d %02d:%02d", st.wMonth, st.wDay,
+                      st.wHour, st.wMinute);
+            W_ROW(A_PRESET_APPLY + n * 100, x, y, 640, 44, base, dts,
+                  g_presetSel == n);
+            W_BTN(A_PRESET_DELETE + n * 100, x + 660, y, 110, 44, L"Delete", 0, 0);
+            W_GHOST(A_PRESET_EXPORT + n * 100, x + 782, y, 150, 44, L"Export", 0, 0);
+            y += 50;
+            n++;
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    if (n == 0)
+        W_DIM(-1, x, y, cw, 20,
+              L"No saved presets yet. Tune your look, give it a name, and save it \u2014 presets are validated JSON you can share.", 0, 0);
+    y += n ? 8 : 30;
+}
+
+/* ---------------- page dispatch ---------------- */
+
+static void build_page(void)
 {
     g_nw = 0;
-    build_top();
-    build_side();
-    switch (g_panel) {
-    case ID_SIDE_DISPLAY: build_display(); break;
-    case ID_SIDE_GAMES:   build_games();   break;
-    case ID_SIDE_SCENES:  build_scenes();  break;
-    case ID_SIDE_CROSS:   build_cross();   break;
-    case ID_SIDE_MODES:   build_modes();   break;
-    case ID_SIDE_SET:     build_set();     break;
+    switch (g_page) {
+    case PG_HOME:       build_home(); break;
+    case PG_GAMES:      build_games(); break;
+    case PG_DISPLAY:    build_display(); break;
+    case PG_COLOR:      build_color(); break;
+    case PG_PRESETS:    build_presets(); break;
+    case PG_CROSSHAIR:  build_crosshair(); break;
+    case PG_MONITORS:   build_monitors(); break;
+    case PG_AUTOMATION: build_automation(); break;
+    case PG_TOOLS:      build_tools(); break;
+    case PG_SETTINGS:   build_settings(); break;
+    }
+    int bottom = 0;
+    for (int i = 0; i < g_nw; i++)
+        if (g_w[i].r.bottom > bottom) bottom = g_w[i].r.bottom;
+    g_scrollMax = bottom - 810;
+    if (g_scrollMax < 0) g_scrollMax = 0;
+    if (g_scroll > g_scrollMax) g_scroll = g_scrollMax;
+}
+
+static void refresh(void)
+{
+    build_page();
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+/* ---------------- file helpers ---------------- */
+
+static void list_pick(const wchar_t *sub, int idx, wchar_t *out, int sz,
+                      int wantNewest)
+{
+    WIN32_FIND_DATAW fd;
+    wchar_t pat[MAX_PATH];
+    wsprintfW(pat, L"%s\\%s\\*.json", g_appdata, sub);
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) { out[0] = 0; return; }
+    int n = 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (wantNewest) lstrcpynW(out, fd.cFileName, sz);
+        else if (n == idx) { lstrcpynW(out, fd.cFileName, sz); break; }
+        n++;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+static char *w2a_alloc(const wchar_t *s) { return Main_Utf16ToUtf8Alloc(s); }
+
+static void apply_current_look(const wchar_t *source)
+{
+    Eng_ApplyLook(&g_look, g_colorMon, g_colorMon < 0);
+    Main_AppliedHistoryAdd(source, &g_look, g_colorMon);
+    Main_Save();
+}
+
+/* ---------------- actions ---------------- */
+
+static void on_action(int id, int arg1)
+{
+    switch (id) {
+    case A_NAV:
+        g_page = arg1;
+        g_scroll = 0;
+        g_focusId = -1;
+        refresh();
+        return;
+
+    /* ---------------- home ---------------- */
+    case A_HOME_GAMING:
+        Main_ToggleGaming();
+        refresh();
+        return;
+    case A_HOME_XH:
+        g_xh.on = !g_xh.on;
+        Xh_Update(&g_xh);
+        Main_Save();
+        toast(g_xh.on ? L"Crosshair on" : L"Crosshair off");
+        refresh();
+        return;
+    case A_HOME_PHONE:
+    case A_SET_PHONE:
+        if (Phone_Running()) { Phone_Stop(); toast(L"Phone control stopped"); }
+        else if (Phone_Start()) { toast(L"Phone control started"); }
+        else toast(L"Phone control could not bind port 8777");
+        refresh();
+        return;
+    case A_HOME_PHONE_TOKEN:
+    case A_SET_PHONE_TOKEN: {
+        wchar_t msg[96];
+        wsprintfW(msg, L"Token: %s (copied)", Phone_Token());
+        toast(msg);
+        if (OpenClipboard(g_hwnd)) {
+            EmptyClipboard();
+            size_t n = (wcslen(Phone_Token()) + 1) * sizeof(wchar_t);
+            HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, n);
+            if (h) {
+                memcpy(h, Phone_Token(), n);
+                SetClipboardData(CF_UNICODETEXT, h);
+            }
+            CloseClipboard();
+        }
+        return;
+    }
+    case A_HOME_RESET:
+        Main_ResetAllChanges();
+        refresh();
+        return;
+    case A_HOME_BACKUP:
+    case A_TL_BACKUP:
+        Main_Backup(L"manual");
+        toast(L"Backup created");
+        refresh();
+        return;
+    case A_HOME_RESTORE_LKG:
+    case A_TL_RESTORE_BK:
+    case A_TL_RESTORE:
+        if (Main_RestoreBackup() != 0) { toast(L"Restored last known good"); refresh(); }
+        else toast(L"No backup found");
+        return;
+
+    case A_HOME_TEST1: case A_HOME_TEST2: case A_HOME_TEST3: case A_HOME_TEST4:
+        Diag_RunPattern(id - A_HOME_TEST1, 0);
+        refresh();
+        return;
+
+    /* ---------------- games ---------------- */
+    case A_SEARCH:
+        return;   /* focus set in WndProc */
+    case A_GAME_AUTO:
+        if (g_page == PG_GAMES) {
+            Gw_SetGameLook(g_selGame, g_selLook[g_selGame]);
+            Main_Save();
+            const CxGame *g = CxGames_Get(g_selGame);
+            wchar_t m[128];
+            MultiByteToWideChar(CP_UTF8, 0, g->name, -1, m, 127);
+            wsprintfW(m, L"%s \u2014 auto-apply look saved", m);
+            toast(m);
+            refresh();
+        } else {
+            g_settings.autoApply = !g_settings.autoApply;
+            Gw_SetAutoApply(g_settings.autoApply);
+            Main_Save();
+            toast(g_settings.autoApply ? L"Auto-apply on" : L"Auto-apply off");
+            refresh();
+        }
+        return;
+    case A_GAME_FAV:
+        Main_ToggleFavorite(g_selGame);
+        Main_Save();
+        refresh();
+        return;
+    case A_GAME_APPLY: {
+        const CxGame *g = CxGames_Get(g_selGame);
+        int k = g_selLook[g_selGame];
+        if (k >= g->nlooks) k = 0;
+        g_look = g->looks[k].look;
+        g_look.enabled = 1;
+        CxLook_Clamp(&g_look);
+        wchar_t src[96];
+        MultiByteToWideChar(CP_UTF8, 0, g->name, -1, src, 95);
+        apply_current_look(src);
+        toast(L"Game look applied");
+        refresh();
+        return;
+    }
+
+    /* ---------------- display ---------------- */
+    case A_MON_SELECT: {
+        int n = MonCount() ? MonCount() : 1;
+        g_selMon = (g_selMon + 1) % n;
+        refresh();
+        return;
+    }
+    case A_MODE_APPLY: {
+        if (Modes_Apply(g_selMon, g_selMode[g_selMon]) == 0) {
+            toast(L"Display changed");
+            MonRefresh();
+            Modes_Refresh();
+            apply_current_look(L"display change");
+        } else {
+            toast(L"Mode not accepted by the driver \u2014 no change made");
+        }
+        refresh();
+        return;
+    }
+    case A_HDR_TOGGLE: {
+        HdrState hs;
+        Hdr_ScanFor(g_selMon, &hs);
+        if (!hs.capable) { toast(L"Not supported by this driver/display"); return; }
+        if (Hdr_SetEnabled(g_selMon, !hs.enabled) == 0)
+            toast(hs.enabled ? L"HDR off" : L"HDR on");
+        else toast(L"Driver refused the HDR change");
+        refresh();
+        return;
+    }
+    case A_HDR_OPEN:
+        Hdr_OpenSettings();
+        return;
+
+    /* ---------------- color ---------------- */
+    case A_COLOR_MASTER:
+        g_look.enabled = !g_look.enabled;
+        apply_current_look(L"color master");
+        refresh();
+        return;
+    case A_COLOR_RESET_SYS: {
+        g_look.sat = 100; g_look.vibrance = 100; g_look.temperature = 6500;
+        g_look.tint = 0; g_look.intensity = 100; g_look.hue = 0;
+        apply_current_look(L"reset system");
+        refresh();
+        return;
+    }
+    case A_COLOR_RESET_MON: {
+        g_look.brightness = 100; g_look.contrast = 100; g_look.gamma = 1.0f;
+        g_look.shadows = 100; g_look.highlights = 100; g_look.blacklevel = 100;
+        g_look.whitepoint = 100; g_look.clarity = 100; g_look.dehaze = 100;
+        g_look.red = g_look.green = g_look.blue = 100;
+        apply_current_look(L"reset monitor");
+        refresh();
+        return;
+    }
+    case A_COLOR_MON: {
+        int maxm = MonCount() ? MonCount() : 1;
+        g_colorMon = (g_colorMon + 1) % (maxm + 1) - 1;
+        if (g_colorMon >= MonCount()) g_colorMon = -1;
+        apply_current_look(L"target change");
+        refresh();
+        return;
+    }
+    case A_SCENE:
+        Prev_Scene(id - A_SCENE);
+        g_curScene = id - A_SCENE;
+        refresh();
+        return;
+
+    /* ---------------- crosshair ---------------- */
+    case A_XH_ON:
+        g_xh.on = !g_xh.on;
+        Xh_Update(&g_xh);
+        Main_Save();
+        refresh();
+        return;
+    case A_XH_OUTLINE:
+        g_xh.outline = !g_xh.outline;
+        Xh_Update(&g_xh);
+        Main_Save();
+        refresh();
+        return;
+    case A_XH_DOT:
+        g_xh.dot = !g_xh.dot;
+        Xh_Update(&g_xh);
+        Main_Save();
+        refresh();
+        return;
+    case A_XH_COLOR: {
+        COLORREF c = g_xh.color;
+        if (GetColor(&c)) {
+            g_xh.color = c;
+            Xh_Update(&g_xh);
+            Main_Save();
+        }
+        return;
+    }
+    case A_XH_OCOLOR: {
+        COLORREF c = g_xh.ocolor;
+        if (GetColor(&c)) {
+            g_xh.ocolor = c;
+            Xh_Update(&g_xh);
+            Main_Save();
+        }
+        return;
+    }
+    case A_XH_MON: {
+        int maxm = MonCount() ? MonCount() : 1;
+        g_xh.monitor = (g_xh.monitor + 1) % (maxm + 1) - 1;
+        if (g_xh.monitor >= MonCount()) g_xh.monitor = -1;
+        Xh_Update(&g_xh);
+        Main_Save();
+        refresh();
+        return;
+    }
+    case A_XH_PRESET: {
+        const CxXhPreset *p = CxXhPresets_Get((id - A_XH_PRESET) / 100);
+        g_xh.shape = p->shape; g_xh.size = p->size; g_xh.gap = p->gap;
+        g_xh.thick = p->thick; g_xh.opacity = p->opacity;
+        g_xh.outline = p->outline; g_xh.dot = p->dot; g_xh.rotation = p->rotation;
+        g_xh.color = RGB((p->color >> 16) & 0xFF, (p->color >> 8) & 0xFF,
+                         p->color & 0xFF);
+        g_xh.ocolor = RGB((p->ocolor >> 16) & 0xFF, (p->ocolor >> 8) & 0xFF,
+                          p->ocolor & 0xFF);
+        Xh_Update(&g_xh);
+        Main_Save();
+        refresh();
+        return;
+    }
+
+    /* ---------------- tools ---------------- */
+    case A_TL_PATTERN:
+        Diag_RunPattern(id - A_TL_PATTERN, 0);
+        refresh();
+        return;
+    case A_TL_DIAG: {
+        wchar_t path[MAX_PATH];
+        wsprintfW(path, L"%s\\chromax-report.txt", g_appdata);
+        if (Diag_Export(path) == 0) {
+            ShellExecuteW(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL);
+            toast(L"Diagnostic report saved");
+        } else toast(L"Could not write the report");
+        return;
+    }
+    case A_TL_LOG:
+        Main_OpenLogs();
+        return;
+    case A_TL_CLEARLOG:
+        Main_ClearLogs();
+        toast(L"Log cleared");
+        return;
+    case A_TL_DATA:
+        Main_OpenDataFolder();
+        return;
+
+    /* ---------------- settings ---------------- */
+    case A_SET_STARTWIN:
+        g_settings.startWin = !g_settings.startWin;
+        Main_ApplyStartWithWin(g_settings.startWin);
+        Main_Save();
+        refresh();
+        return;
+    case A_SET_TRAY:
+        g_settings.minTray = !g_settings.minTray;
+        Main_Save();
+        refresh();
+        return;
+    case A_SET_NOTIFY:
+        g_settings.trayNotify = !g_settings.trayNotify;
+        Main_Save();
+        refresh();
+        return;
+    case A_SET_RESET:
+        Main_ResetSettings();
+        refresh();
+        return;
+    }
+
+    /* ranges */
+    if (id >= A_GAME_SELECT && id < A_GAME_SELECT + 4000) {
+        int i = (id - A_GAME_SELECT) / 100;
+        if (i < CxGames_Count()) {
+            g_selGame = CxGames_Get(i)->id;
+            if (g_selLook[g_selGame] < 0) g_selLook[g_selGame] = 0;
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_GAME_LOOK && id < A_GAME_LOOK + 4000) {
+        int k = (id - A_GAME_LOOK) / 100;
+        const CxGame *g = CxGames_Get(g_selGame);
+        if (k < g->nlooks) {
+            g_selLook[g_selGame] = k;
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_MODE_SELECT && id < A_MODE_SELECT + 60000) {
+        int m = id / 10000;
+        int i = (id / 100) % 100;
+        if (m < MonCount() && i < Modes_CountFor(m)) {
+            g_selMode[m] = i;
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_PRESET_RATIO && id < A_PRESET_RATIO + 4000) {
+        int i = (id - A_PRESET_RATIO) / 100;
+        if (i < CxDispPresets_Count()) {
+            const CxDispPreset *d = CxDispPresets_Get(i);
+            if (Modes_ApplySpec(g_selMon, d->w, d->h, 0) == 0) {
+                toast(L"Display changed");
+                MonRefresh();
+                Modes_Refresh();
+                apply_current_look(L"ratio preset");
+            } else toast(L"Mode not accepted by the driver");
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_LOOK_CHIP && id < A_LOOK_CHIP + 4000) {
+        int i = (id - A_LOOK_CHIP) / 100;
+        if (i < CxLooks_Count()) {
+            g_look = CxLooks_Get(i)->look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            apply_current_look(L"quick look");
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_PRESET_APPLY && id < A_PRESET_APPLY + 4000) {
+        int i = (id - A_PRESET_APPLY) / 100;
+        wchar_t fname[64] = { 0 };
+        list_pick(L"presets", i, fname, 64, 0);
+        if (fname[0]) {
+            wchar_t full[MAX_PATH];
+            wsprintfW(full, L"%s\\presets\\%s", g_appdata, fname);
+            CxPreset p;
+            char err[160] = { 0 };
+            char *u8 = w2a_alloc(full);
+            if (CxPreset_ImportFile(u8, &p, err, sizeof err) == 0) {
+                g_look = p.look;
+                g_look.enabled = 1;
+                CxLook_Clamp(&g_look);
+                apply_current_look(L"preset");
+                wchar_t m[96];
+                MultiByteToWideChar(CP_UTF8, 0, p.name, -1, m, 95);
+                wsprintfW(m, L"Applied preset \"%s\"", m);
+                toast(m);
+            } else {
+                toast(L"Preset file is not valid \u2014 not applied");
+            }
+            free(u8);
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_PRESET_DELETE && id < A_PRESET_DELETE + 4000) {
+        int i = (id - A_PRESET_DELETE) / 100;
+        wchar_t fname[64] = { 0 };
+        list_pick(L"presets", i, fname, 64, 0);
+        if (fname[0]) {
+            wchar_t full[MAX_PATH];
+            wsprintfW(full, L"%s\\presets\\%s", g_appdata, fname);
+            if (DeleteFileW(full)) { toast(L"Preset deleted"); refresh(); }
+            else toast(L"Could not delete preset");
+        }
+        return;
+    }
+    if (id >= A_PRESET_SAVE && id < A_PRESET_SAVE + 4000) {
+        /* name comes from the search box on this page */
+        char name[160] = { 0 };
+        for (int i = 0; i < g_nw; i++)
+            if (g_w[i].type == W_SEARCH) {
+                lstrcpynA(name, g_w[i].buf, 160);
+                break;
+            }
+        /* sanitize: allow alnum space - _ */
+        for (int i = 0; name[i]; i++)
+            if (!(isalnum((unsigned char)name[i]) || name[i] == ' ' ||
+                  name[i] == '-' || name[i] == '_'))
+                name[i] = '_';
+        if (!name[0]) { toast(L"Give the preset a name first"); return; }
+        CxPreset p;
+        CxPreset_Default(&p, name);
+        p.look = g_look;
+        CxLook_Clamp(&p.look);
+        p.xh_on = g_xh.on; p.xh_shape = g_xh.shape; p.xh_size = g_xh.size;
+        p.xh_gap = g_xh.gap; p.xh_thick = g_xh.thick; p.xh_opacity = g_xh.opacity;
+        p.xh_outline = g_xh.outline; p.xh_dot = g_xh.dot; p.xh_rotation = g_xh.rotation;
+        p.xh_color = ((GetRValue(g_xh.color) << 16) | (GetGValue(g_xh.color) << 8) |
+                      GetBValue(g_xh.color));
+        p.xh_ocolor = ((GetRValue(g_xh.ocolor) << 16) | (GetGValue(g_xh.ocolor) << 8) |
+                       GetBValue(g_xh.ocolor));
+        p.disp_w = 0; p.disp_h = 0; p.disp_hz = 0;
+        p.auto_on_exit = g_settings.restoreOnExit;
+        p.delay_ms = g_settings.delayMs;
+        wchar_t full[MAX_PATH];
+        wsprintfW(full, L"%s\\presets\\", g_appdata);
+        char diru[MAX_PATH];
+        WideCharToMultiByte(CP_UTF8, 0, full, -1, diru, MAX_PATH - 1, NULL, NULL);
+        char fnu[MAX_PATH];
+        sprintf(fnu, "%s%s.json", diru, name);
+        if (CxPreset_WriteFile(fnu, &p) == 0) {
+            toast(L"Preset saved");
+            refresh();
+        } else toast(L"Could not save preset");
+        return;
+    }
+    if (id >= A_PRESET_IMPORT && id < A_PRESET_IMPORT + 4000) {
+        wchar_t path[MAX_PATH] = { 0 };
+        OPENFILENAMEW ofn;
+        memset(&ofn, 0, sizeof ofn);
+        ofn.lStructSize = sizeof ofn;
+        ofn.hwndOwner = g_hwnd;
+        ofn.lpstrFilter = L"ChromaX preset (*.json)\0*.json\0All files (*.*)\0*.*\0";
+        ofn.lpstrFile = path;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_FILEMUSTEXIST;
+        if (!GetOpenFileNameW(&ofn)) return;
+        CxPreset p;
+        char err[160] = { 0 };
+        char *u8 = w2a_alloc(path);
+        if (CxPreset_ImportFile(u8, &p, err, sizeof err) == 0) {
+            g_look = p.look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            apply_current_look(L"imported preset");
+            toast(L"Imported preset applied");
+        } else {
+            toast(L"File rejected: not a valid ChromaX preset");
+        }
+        free(u8);
+        refresh();
+        return;
+    }
+    if (id >= A_PRESET_EXPORT && id < A_PRESET_EXPORT + 4000) {
+        /* export: if a preset row export \u2014 export that file's copy;
+           otherwise export the current state */
+        int i = (id - A_PRESET_EXPORT) / 100;
+        wchar_t src[64] = { 0 };
+        CxPreset p;
+        CxPreset_Default(&p, "Exported");
+        p.look = g_look;
+        CxLook_Clamp(&p.look);
+        if (i > 0) {
+            list_pick(L"presets", i - 1, src, 64, 0);
+            if (src[0]) {
+                wchar_t full[MAX_PATH];
+                wsprintfW(full, L"%s\\presets\\%s", g_appdata, src);
+                char err[160] = { 0 };
+                char *u8 = w2a_alloc(full);
+                if (CxPreset_ImportFile(u8, &p, err, sizeof err) != 0) {
+                    free(u8);
+                    toast(L"Cannot read that preset");
+                    return;
+                }
+                free(u8);
+            }
+        }
+        wchar_t path[MAX_PATH] = { 0 };
+        OPENFILENAMEW ofn;
+        memset(&ofn, 0, sizeof ofn);
+        ofn.lStructSize = sizeof ofn;
+        ofn.hwndOwner = g_hwnd;
+        ofn.lpstrFilter = L"ChromaX preset (*.json)\0*.json\0";
+        ofn.lpstrFile = path;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrDefExt = L"json";
+        ofn.Flags = OFN_OVERWRITEPROMPT;
+        if (!GetSaveFileNameW(&ofn)) return;
+        char *u8 = w2a_alloc(path);
+        if (CxPreset_WriteFile(u8, &p) == 0) toast(L"Preset exported");
+        else toast(L"Export failed");
+        free(u8);
+        refresh();
+        return;
+    }
+    if (id >= A_TL_BK_LIST && id < A_TL_BK_LIST + 4000) {
+        int i = (id - A_TL_BK_LIST) / 100;
+        wchar_t fname[64] = { 0 };
+        list_pick(L"backups", i, fname, 64, 0);
+        if (fname[0]) {
+            wchar_t full[MAX_PATH];
+            wsprintfW(full, L"%s\\backups\\%s", g_appdata, fname);
+            CxBackup b;
+            char err[160] = { 0 };
+            char *u8 = w2a_alloc(full);
+            if (CxBackup_ReadFile(u8, &b, err, sizeof err) == 0) {
+                g_look = b.look;
+                CxLook_Clamp(&g_look);
+                apply_current_look(L"backup restore");
+                toast(L"Backup restored");
+            } else toast(L"Backup file invalid \u2014 not applied");
+            free(u8);
+            refresh();
+        }
+        return;
+    }
+    if (id >= A_AUTO_HK && id < A_AUTO_HK + 4000) {
+        int i = (id - A_AUTO_HK) / 100;
+        g_hotcapId = i;
+        toast(L"Press the new hotkey combination (Esc to cancel)");
+        return;
+    }
+    if (id >= A_XH_SHAPE * 10 && id < A_XH_SHAPE * 10 + 9) {
+        int sh = id - A_XH_SHAPE * 10;
+        g_xh.shape = sh;
+        Xh_Update(&g_xh);
+        Main_Save();
+        refresh();
+        return;
+    }
+    (void)arg1;
+}
+
+/* ---------------- colour picker ---------------- */
+
+static int GetColor(COLORREF *c)
+{
+    CHOOSECOLORW cc;
+    memset(&cc, 0, sizeof cc);
+    cc.lStructSize = sizeof cc;
+    cc.hwndOwner = g_hwnd;
+    cc.Flags = CC_RGBINIT | CC_FULLOPEN;
+    cc.rgbResult = *c;
+    if (ChooseColorW(&cc)) {
+        *c = cc.rgbResult;
+        return 1;
+    }
+    return 0;
+}
+
+/* ---------------- slider drag ---------------- */
+
+static int g_dragIdx = -1;
+
+static void slider_set_value(Widget *p, float v)
+{
+    v = clampf(v, p->smin, p->smax);
+    if (p->shape == 1)
+        *(int *)(intptr_t)p->arg1 = (int)(v + 0.5f);
+    else
+        *(float *)(intptr_t)p->arg1 = v;
+    p->fnum = v;
+}
+
+static void slider_apply(Widget *p)
+{
+    intptr_t v = (intptr_t)p->arg1;
+    if (v >= (intptr_t)&g_look && v < (intptr_t)(&g_look + 1)) {
+        apply_current_look(L"slider");
+    } else if (v >= (intptr_t)&g_xh && v < (intptr_t)(&g_xh + 1)) {
+        Xh_Update(&g_xh);
+        Main_Save();
+    } else if (v == (intptr_t)&g_settings.delayMs) {
+        Gw_SetDelayMs(g_settings.delayMs);
+        Main_Save();
     }
 }
 
-/* ---------------- painting ---------------- */
+/* ---------------- hotkey capture ---------------- */
 
-static void rrect(HDC dc, RECT rc, int rad, HBRUSH br, HPEN pen)
+static const wchar_t *vk_to_keyname(WPARAM vk)
 {
-    HGDIOBJ ob = SelectObject(dc, pen ? pen : GetStockObject(NULL_PEN));
-    HGDIOBJ obrush = SelectObject(dc, br);
-    RoundRect(dc, rc.left, rc.top, rc.right, rc.bottom, rad, rad);
-    SelectObject(dc, obrush);
-    SelectObject(dc, ob);
-}
-
-static void txt(HDC dc, RECT rc, const wchar_t *s, HFONT f, COLORREF c, int align)
-{
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, c);
-    HGDIOBJ of = SelectObject(dc, f);
-    DrawTextW(dc, s, -1, &rc, align | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    SelectObject(dc, of);
-}
-
-static void draw_xh_preview(HDC dc, RECT rc, const XhCfg *c)
-{
-    int cx = (rc.left + rc.right) / 2, cy = (rc.top + rc.bottom) / 2 - S(8);
-    int sz = S(14), gap = S(max(c->gap / 2, 1)), th = max(S(c->thick), 3);
-    HPEN pen = CreatePen(PS_SOLID, th, c->color);
-    HGDIOBJ op = SelectObject(dc, pen);
-    SetBkMode(dc, TRANSPARENT);
-    switch (c->shape) {
-    case XH_CROSS:
-        MoveToEx(dc, cx - gap - sz, cy, NULL); LineTo(dc, cx + gap + sz, cy);
-        MoveToEx(dc, cx, cy - gap - sz, NULL); LineTo(dc, cx, cy + gap + sz);
-        break;
-    case XH_DOT: {
-        HBRUSH b = CreateSolidBrush(c->color);
-        HGDIOBJ ob = SelectObject(dc, b);
-        int r = S(6);
-        Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
-        SelectObject(dc, ob); DeleteObject(b);
-        break; }
-    case XH_CIRCLE: {
-        int r = sz;
-        HGDIOBJ ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
-        SelectObject(dc, ob);
-        break; }
-    case XH_CHEVRON: {
-        POINT p[3] = { { cx - sz, cy - sz }, { cx + gap, cy }, { cx - sz, cy + sz } };
-        Polyline(dc, p, 3);
-        break; }
-    case XH_T:
-        MoveToEx(dc, cx - gap - sz, cy - gap, NULL); LineTo(dc, cx + gap + sz, cy - gap);
-        MoveToEx(dc, cx, cy - gap, NULL); LineTo(dc, cx, cy + gap + sz);
-        break;
-    case XH_TTYPE:
-        MoveToEx(dc, cx - gap - sz, cy + gap, NULL); LineTo(dc, cx + gap + sz, cy + gap);
-        MoveToEx(dc, cx, cy - gap - sz, NULL); LineTo(dc, cx, cy + gap);
-        break;
+    if (vk >= 'A' && vk <= 'Z') {
+        static wchar_t b[8];
+        b[0] = (wchar_t)vk; b[1] = 0;
+        return b;
     }
-    SelectObject(dc, op);
-    DeleteObject(pen);
-}
-
-static void draw_widget(HDC dc, Widget *k)
-{
-    RECT rc = k->rc;
-    int hov = (g_hover == k->id);
-    HBRUSH br_card = CreateSolidBrush(C_CARD);
-    HBRUSH br_card2 = CreateSolidBrush(C_CARD2);
-    HBRUSH br_acc = CreateSolidBrush(C_ACC);
-    HBRUSH br_bg = CreateSolidBrush(C_BG);
-    HBRUSH br_side = CreateSolidBrush(C_SIDE);
-    HPEN pen_line = CreatePen(PS_SOLID, 1, C_LINE);
-    HPEN pen_acc = CreatePen(PS_SOLID, 1, C_ACC);
-    HPEN pen_non = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
-
-    switch (k->type) {
-    case WT_HEAD:
-        txt(dc, rc, k->text, g_fH1, C_TXT, DT_LEFT);
-        break;
-    case WT_LABEL:
-        txt(dc, rc, k->text, g_fBody, (k->flags & 1) ? C_DIM : C_SUB, DT_LEFT);
-        break;
-    case WT_READOUT: {
-        RECT r1 = rc, r2 = rc;
-        wchar_t big[32];
-        if (g_look.enabled) wsprintfW(big, L"%d%%", (int)g_look.sat);
-        else lstrcpyW(big, L"OFF");
-        r1.bottom = r1.top + S(58);
-        r2.top = r1.bottom;
-        txt(dc, r1, big, g_fBig, g_look.enabled ? C_ACC : C_DIM, DT_RIGHT);
-        txt(dc, r2, L"saturation · free", g_fSmall, C_SUB, DT_RIGHT);
-        break; }
-    case WT_PRIMARY:
-    case WT_GHOST:
-    case WT_BTN: {
-        HBRUSH fill;
-        COLORREF fc = C_TXT;
-        if (k->type == WT_PRIMARY) { fill = br_acc; fc = C_DARK; }
-        else { fill = hov ? br_card2 : br_card; }
-        rrect(dc, rc, S(10), fill, (hov || k->type == WT_PRIMARY) ? pen_acc : pen_line);
-        if (k->id == ID_CAP_CLOSE && hov) {
-            HBRUSH dang = CreateSolidBrush(C_DANG);
-            rrect(dc, rc, S(10), dang, pen_line);
-            DeleteObject(dang);
-            fc = C_TXT;
-        }
-        txt(dc, rc, k->text, g_fH2, fc, DT_CENTER);
-        break; }
-    case WT_SLIDER: {
-        /* label + value */
-        RECT rl = rc, rv = rc;
-        rl.bottom = rl.top + S(26);
-        rv.bottom = rv.top + S(26);
-        rv.left = rv.right - S(110);
-        txt(dc, rl, k->text, g_fBody, C_TXT, DT_LEFT);
-        txt(dc, rv, k->val, g_fMono, hov || g_active == k->id ? C_ACC : C_SUB, DT_RIGHT);
-        /* track */
-        int ins = S(4);
-        int tx1 = rc.left + ins, tx2 = rc.right - ins;
-        int ty = rc.top + S(50);
-        RECT tr = { tx1, ty - S(3), tx2, ty + S(3) };
-        rrect(dc, tr, S(3), br_card2, pen_non);
-        float cur = 0;
-        switch (k->id) {
-        case ID_SAT: cur = g_look.sat; break;
-        case ID_BRI: cur = g_look.bri; break;
-        case ID_CON: cur = g_look.con; break;
-        case ID_TEMP: cur = g_look.temp; break;
-        case ID_HUE: cur = g_look.hue; break;
-        case ID_GAMMA: cur = g_look.gamma; break;
-        case ID_XH_SIZE: cur = (float)g_xh.size; break;
-        case ID_XH_GAP: cur = (float)g_xh.gap; break;
-        case ID_XH_THICK: cur = (float)g_xh.thick; break;
-        case ID_XH_DOTOP: cur = (float)g_xh.dotop; break;
-        }
-        float f = clampf((cur - k->vmin) / (k->vmax - k->vmin), 0, 1);
-        int fx = tx1 + (int)((tx2 - tx1) * f);
-        if (fx > tx1) {
-            RECT fr = { tx1, ty - S(3), fx, ty + S(3) };
-            rrect(dc, fr, S(3), br_acc, pen_non);
-        }
-        int th = (hov || g_active == k->id) ? S(9) : S(7);
-        RECT th_ = { fx - th, ty - th, fx + th, ty + th };
-        rrect(dc, th_, th, CreateSolidBrush(RGB(255, 255, 255)), pen_non);
-        break; }
-    case WT_TOGGLE: {
-        RECT rl = rc; rl.right -= S(56);
-        txt(dc, rl, k->text, g_fBody, C_TXT, DT_LEFT);
-        RECT pr = { rc.right - S(48), rc.top + S(5), rc.right, rc.bottom - S(5) };
-        HBRUSH pb = CreateSolidBrush(k->state ? C_ACC : C_CARD2);
-        rrect(dc, pr, (pr.bottom - pr.top) / 2, pb, pen_non);
-        int kr = (pr.bottom - pr.top) / 2 - S(3);
-        int kx = k->state ? pr.right - kr - S(4) : pr.left + kr + S(4);
-        int ky = (pr.top + pr.bottom) / 2;
-        RECT kb = { kx - kr, ky - kr, kx + kr, ky + kr };
-        rrect(dc, kb, kr, CreateSolidBrush(k->state ? C_DARK : C_SUB), pen_non);
-        DeleteObject(pb);
-        break; }
-    case WT_SIDE: {
-        if (k->state) {
-            RECT bg = rc;
-            rrect(dc, bg, S(10), br_card2, pen_non);
-            RECT bar = { rc.left + S(6), rc.top + S(10), rc.left + S(9), rc.bottom - S(10) };
-            RECT b2 = bar; rrect(dc, b2, S(2), br_acc, pen_non);
-        }
-        RECT rl = rc; rl.left += S(18);
-        txt(dc, rl, k->text, g_fH2, k->state ? C_TXT : (hov ? C_TXT : C_SUB), DT_LEFT);
-        break; }
-    case WT_ROW: {
-        HBRUSH fill = k->state ? br_card2 : (hov ? br_card2 : br_card);
-        HPEN pen = k->state ? pen_acc : pen_line;
-        rrect(dc, rc, S(8), fill, pen);
-        if (k->state) {
-            RECT dot = { rc.left + S(12), rc.top + S(15), rc.left + S(22), rc.top + S(25) };
-            rrect(dc, dot, S(5), br_acc, pen_non);
-        }
-        RECT rl = rc; rl.left += S(34); rl.right -= S(10);
-        txt(dc, rl, k->text, g_fBody, k->state ? C_TXT : (hov ? C_TXT : C_SUB), DT_LEFT);
-        break; }
-    case WT_CARD_INFO: {
-        rrect(dc, rc, S(10), br_card, pen_line);
-        RECT r1 = rc, r2 = rc;
-        r1.left += S(16); r1.bottom = r1.top + S(30);
-        r2.left += S(16); r2.top = r1.bottom - S(2);
-        txt(dc, r1, k->text, g_fH2, C_ACC, DT_LEFT);
-        txt(dc, r2, k->val[0] ? k->val : L"", g_fSmall, C_SUB, DT_LEFT);
-        break; }
-    case WT_DIV: {
-        RECT rt = rc;
-        txt(dc, rt, k->text, g_fSmall, C_DIM, DT_LEFT);
-        int y = (rc.top + rc.bottom) / 2;
-        RECT ln = { rc.left + S(150), y, rc.right, y + 1 };
-        FillRect(dc, &ln, br_line_dummy());
-        break; }
-    case WT_SCENE: {
-        HBRUSH fill = hov ? br_card2 : br_card;
-        rrect(dc, rc, S(12), fill, hov ? pen_acc : pen_line);
-        RECT r1 = rc, r2 = rc;
-        r1.left += S(16); r1.top += S(16); r1.bottom = r1.top + S(28);
-        txt(dc, r1, k->text, g_fH2, C_TXT, DT_LEFT);
-        r2.left += S(16); r2.top = r1.bottom; r2.bottom = r2.top + S(22);
-        txt(dc, r2, k->val, g_fSmall, C_SUB, DT_LEFT);
-        /* accent bar */
-        RECT a1 = { rc.left + S(16), rc.bottom - S(24), rc.left + S(76), rc.bottom - S(18) };
-        RECT a2 = { rc.left + S(82), rc.bottom - S(24), rc.left + S(112), rc.bottom - S(18) };
-        rrect(dc, a1, S(3), br_acc, pen_non);
-        rrect(dc, a2, S(3), CreateSolidBrush(C_VIO), pen_non);
-        break; }
-    case WT_SHAPE: {
-        HBRUSH fill = hov ? br_card2 : br_card;
-        rrect(dc, rc, S(10), fill, k->state ? pen_acc : pen_line);
-        XhCfg pv = g_xh;
-        pv.shape = k->id - ID_XH_CROSS;
-        draw_xh_preview(dc, rc, &pv);
-        RECT rl = rc; rl.top = rl.bottom - S(24);
-        txt(dc, rl, k->text, g_fSmall, k->state ? C_ACC : C_SUB, DT_CENTER);
-        break; }
-    case WT_SWATCH: {
-        COLORREF col = (COLORREF)_wtoi(k->val);
-        HBRUSH b = CreateSolidBrush(col);
-        RECT inner = { rc.left + S(3), rc.top + S(3), rc.right - S(3), rc.bottom - S(3) };
-        rrect(dc, inner, S(8), b, k->state ? pen_acc : pen_line);
-        if (k->state) {
-            RECT o = rc;
-            rrect(dc, o, S(9), (HBRUSH)GetStockObject(NULL_BRUSH), pen_acc);
-        }
-        DeleteObject(b);
-        break; }
+    if (vk >= '0' && vk <= '9') {
+        static wchar_t b[8];
+        b[0] = L'D'; b[1] = (wchar_t)vk; b[2] = 0;
+        return b;
     }
-
-    DeleteObject(br_card); DeleteObject(br_card2); DeleteObject(br_acc);
-    DeleteObject(br_bg); DeleteObject(br_side);
-    DeleteObject(pen_line); DeleteObject(pen_acc); DeleteObject(pen_non);
-}
-
-/* dummy for divider line — real brush */
-static HBRUSH br_line_dummy(void)
-{
-    static HBRUSH b;
-    if (!b) b = CreateSolidBrush(C_LINE);
+    static const wchar_t *names[][2] = {
+        { L"VK_SPACE", L"Space" }, { L"VK_RETURN", L"Enter" }, { L"VK_TAB", L"Tab" },
+    };
+    (void)names;
+    static wchar_t b[16];
+    if (vk == VK_SPACE) lstrcpyW(b, L"Space");
+    else if (vk == VK_RETURN) lstrcpyW(b, L"Enter");
+    else if (vk == VK_TAB) lstrcpyW(b, L"Tab");
+    else if (vk == VK_UP) lstrcpyW(b, L"Up");
+    else if (vk == VK_DOWN) lstrcpyW(b, L"Down");
+    else if (vk == VK_LEFT) lstrcpyW(b, L"Left");
+    else if (vk == VK_RIGHT) lstrcpyW(b, L"Right");
+    else if (vk >= VK_F1 && vk <= VK_F24) wsprintfW(b, L"F%d", (int)(vk - VK_F1 + 1));
+    else b[0] = 0;
     return b;
 }
 
-void Ui_Paint(HDC hdc, const RECT *rc)
+static void hotcap_handle_key(WPARAM vk)
 {
-    HBRUSH bg = CreateSolidBrush(C_BG);
-    RECT all = *rc;
-    FillRect(hdc, &all, bg);
-    DeleteObject(bg);
+    if (vk == VK_ESCAPE) { g_hotcapId = -1; toast(L"Capture cancelled"); return; }
+    if (vk == VK_CONTROL || vk == VK_MENU || vk == VK_SHIFT || vk == VK_LWIN ||
+        vk == VK_RWIN || vk == VK_LMENU || vk == VK_RMENU)
+        return;   /* modifiers only */
 
-    HBRUSH side = CreateSolidBrush(C_SIDE);
-    RECT sr = { 0, 0, S(SIDE_W), S(WIN_H) };
-    FillRect(hdc, &sr, side);
-    DeleteObject(side);
-    RECT sepline = { S(SIDE_W), 0, S(SIDE_W) + 1, S(WIN_H) };
-    HBRUSH lb = CreateSolidBrush(C_LINE);
-    FillRect(hdc, &sepline, lb);
-    RECT topline = { 0, S(TOP_H), S(WIN_W), S(TOP_H) + 1 };
-    FillRect(hdc, &topline, lb);
-    DeleteObject(lb);
+    char combo[64];
+    int o = 0;
+    if (GetKeyState(VK_CONTROL) & 0x8000) o += (int)sprintf(combo + o, "Ctrl+");
+    if (GetKeyState(VK_MENU) & 0x8000)    o += (int)sprintf(combo + o, "Alt+");
+    if (GetKeyState(VK_SHIFT) & 0x8000)   o += (int)sprintf(combo + o, "Shift+");
+    if (GetKeyState(VK_LWIN) & 0x8000 || GetKeyState(VK_RWIN) & 0x8000)
+        o += (int)sprintf(combo + o, "Win+");
 
-    /* logo mark */
-    {
-        RECT box = { S(20), S(14), S(54), S(48) };
-        HBRUSH acc = CreateSolidBrush(C_ACC);
-        rrect(hdc, box, S(9), acc, NULL);
-        DeleteObject(acc);
-        HPEN xp = CreatePen(PS_SOLID, S(4), C_DARK);
-        HGDIOBJ op = SelectObject(hdc, xp);
-        MoveToEx(hdc, S(28), S(22), NULL); LineTo(hdc, S(46), S(40));
-        MoveToEx(hdc, S(46), S(22), NULL); LineTo(hdc, S(28), S(40));
-        SelectObject(hdc, op);
-        DeleteObject(xp);
-        RECT lt = { S(64), S(14), S(220), S(36) };
-        txt(hdc, lt, L"CHROMAX", g_fH1, C_TXT, DT_LEFT);
-        RECT ls = { S(65), S(36), S(220), S(54) };
-        txt(hdc, ls, L"monitor colour, unleashed", g_fSmall, C_SUB, DT_LEFT);
+    const wchar_t *kn = vk_to_keyname(vk);
+    if (!kn[0]) return;
+    char kas[32];
+    WideCharToMultiByte(CP_UTF8, 0, kn, -1, kas, 31, NULL, NULL);
+    o += (int)sprintf(combo + o, "%s", kas);
+
+    CxHotkey h;
+    if (CxHotkey_Parse(combo, &h) != 0) {
+        toast(L"Invalid combination \u2014 needs at least one modifier");
+        return;
     }
-
-    /* title + toast */
-    RECT tr = { S(SIDE_W + 36), S(10), S(WIN_W - 240), S(TOP_H) - S(4) };
-    txt(hdc, tr, g_title, g_fH2, C_TXT, DT_LEFT);
-
-    if (g_toast[0] && GetTickCount() - g_toastT < 4000) {
-        RECT tw = { S(WIN_W - 620), S(12), S(WIN_W - 116), S(TOP_H) - S(8) };
-        HBRUSH cb = CreateSolidBrush(C_CARD);
-        HPEN cp = CreatePen(PS_SOLID, 1, C_ACC);
-        rrect(hdc, tw, S(10), cb, cp);
-        RECT td = tw; td.left += S(14);
-        wchar_t t2[140]; wsprintfW(t2, L"●  %s", g_toast);
-        txt(hdc, td, t2, g_fSmall, C_ACC, DT_LEFT);
-        DeleteObject(cb); DeleteObject(cp);
-    }
-
-    for (int i = 0; i < g_nw; i++) draw_widget(hdc, &g_w[i]);
-}
-
-/* ---------------- interaction ---------------- */
-
-static Widget *hit(int x, int y)
-{
-    for (int i = g_nw - 1; i >= 0; i--) {
-        RECT r = g_w[i].rc;
-        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
-            return &g_w[i];
-    }
-    return NULL;
-}
-
-int Ui_CapHit(int x, int y)
-{
-    Widget *k = hit(x, y);
-    if (k && (k->id == ID_CAP_MIN || k->id == ID_CAP_CLOSE)) return k->id;
-    return 0;
-}
-
-int Ui_InTop(int x, int y) { return y < S(TOP_H); }
-
-static void slider_from_x(Widget *k, int x)
-{
-    int ins = S(4);
-    int tx1 = k->rc.left + ins + S(9), tx2 = k->rc.right - ins - S(9);
-    float f = clampf((float)(x - tx1) / (float)(tx2 - tx1), 0.f, 1.f);
-    float v = k->vmin + f * (k->vmax - k->vmin);
-    switch (k->id) {
-    case ID_SAT:   g_look.sat = floorf(v + .5f); break;
-    case ID_BRI:   g_look.bri = floorf(v + .5f); break;
-    case ID_CON:   g_look.con = floorf(v + .5f); break;
-    case ID_TEMP:  g_look.temp = floorf(v + .5f); break;
-    case ID_HUE:   g_look.hue = floorf(v + .5f); break;
-    case ID_GAMMA: g_look.gamma = floorf(v * 100.f + .5f) / 100.f; break;
-    case ID_XH_SIZE:  g_xh.size = (int)(v + .5f); break;
-    case ID_XH_GAP:   g_xh.gap = (int)(v + .5f); break;
-    case ID_XH_THICK: g_xh.thick = (int)(v + .5f); break;
-    case ID_XH_DOTOP: g_xh.dotop = (int)(v + .5f); break;
-    default: return;
-    }
-    sl(k);
-}
-
-static void set_startwin(int on)
-{
-    const wchar_t *run = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    HKEY hk;
-    if (RegOpenKeyW(HKEY_CURRENT_USER, run, &hk) != ERROR_SUCCESS) return;
-    if (on) {
-        wchar_t cmd[MAX_PATH + 4];
-        wsprintfW(cmd, L"\"%s\"", g_appdir_exe());
-        RegSetValueExW(hk, L"ChromaX", 0, REG_SZ, (const BYTE *)cmd,
-                       (DWORD)((wcslen(cmd) + 1) * sizeof(wchar_t)));
+    if (Main_HotkeySet(g_hotcapId, combo) == 0) {
+        toast(L"Hotkey updated");
     } else {
-        RegDeleteValueW(hk, L"ChromaX");
+        toast(L"Hotkey in use by another app \u2014 not changed");
     }
-    RegCloseKey(hk);
-    g_startwin = on;
+    g_hotcapId = -1;
 }
 
-int Ui_Exec(int id)
+static int g_quit;
+
+void UI_ApplyLook(const wchar_t *src)
 {
-    switch (id) {
-    case ID_CAP_MIN:  ShowWindow(g_ui_hwnd, SW_MINIMIZE); return 1;
-    case ID_CAP_CLOSE: PostMessageW(g_ui_hwnd, WM_CLOSE, 0, 0); return 1;
-    case ID_SIDE_DISPLAY: case ID_SIDE_GAMES: case ID_SIDE_SCENES:
-    case ID_SIDE_CROSS: case ID_SIDE_MODES: case ID_SIDE_SET:
-        Ui_SetPanel(id); return 1;
-    case ID_T_ENABLE:
-        g_look.enabled = !g_look.enabled; build(); Main_ApplyAll();
-        Ui_Notify(g_look.enabled ? L"Look on" : L"Look off"); return 1;
-    case ID_T_DETECT:
-        Prof_SetDetect(!Prof_Detect()); build();
-        Ui_Notify(Prof_Detect() ? L"Auto-switch on" : L"Auto-switch off"); return 1;
-    case ID_T_XH:
-        g_xh.on = !g_xh.on; build(); Main_ApplyAll(); return 1;
-    case ID_T_OUTLINE:
-        g_xh.outline = !g_xh.outline; build(); Main_ApplyAll(); return 1;
-    case ID_T_STARTWIN:
-        set_startwin(!g_startwin); build();
-        Ui_Notify(g_startwin ? L"Starts with Windows" : L"Removed from startup"); return 1;
-    case ID_T_PHONE:
-        if (!g_phoneon) {
-            if (Phone_Start() == 0) { g_phoneon = 1; Phone_SetLook(&g_look);
-                Ui_Notify(L"Phone panel on"); }
-            else Ui_Notify(L"Port 8777 busy");
-        } else { Phone_Stop(); g_phoneon = 0; Ui_Notify(L"Phone panel off"); }
-        build(); return 1;
-    case ID_B_PHONEURL: {
-        if (OpenClipboard(g_ui_hwnd)) {
-            EmptyClipboard();
-            size_t n = (wcslen(Phone_Summary()) + 1) * sizeof(wchar_t);
-            HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, n);
-            if (h) { memcpy(GlobalLock(h), Phone_Summary(), n); GlobalUnlock(h);
-                     SetClipboardData(CF_UNICODETEXT, h); }
-            CloseClipboard();
-            Ui_Notify(L"Link copied");
-        }
-        return 1; }
-    case ID_B_RESET: {
-        Look z = { 100, 0, 0, 0, 0, 1.f, g_look.enabled };
-        g_look = z; build(); Main_ApplyAll(); Ui_Notify(L"Reset — 100%"); return 1; }
-    case ID_B_DISABLE:
-        g_look.enabled = 0; build(); Main_ApplyAll();
-        Ui_Notify(L"Look off — screen untouched"); return 1;
-    /* crosshair shapes */
-    case ID_XH_CROSS:  g_xh.shape = XH_CROSS;  build(); Main_ApplyAll(); return 1;
-    case ID_XH_DOT:    g_xh.shape = XH_DOT;    build(); Main_ApplyAll(); return 1;
-    case ID_XH_CIRCLE: g_xh.shape = XH_CIRCLE; build(); Main_ApplyAll(); return 1;
-    case ID_XH_CHEVRON:g_xh.shape = XH_CHEVRON;build(); Main_ApplyAll(); return 1;
-    case ID_XH_T:      g_xh.shape = XH_T;      build(); Main_ApplyAll(); return 1;
-    case ID_XH_TTYPE:  g_xh.shape = XH_TTYPE;  build(); Main_ApplyAll(); return 1;
-    /* profiles */
-    case ID_B_PROF_APPLY:
-        if (g_selProf >= 0 && g_selProf < Prof_Count()) {
-            Profile *p = Prof_Get(g_selProf);
-            p->look = g_look;
-            Prof_Save();
-            Ui_Notify(L"Values saved to profile");
-        } else Ui_Notify(L"Pick a profile first");
-        return 1;
-    case ID_B_PROF_DEL:
-        if (g_selProf >= 0) {
-            Prof_Del(g_selProf);
-            g_selProf = -1; build(); Ui_Notify(L"Profile deleted");
-        }
-        return 1;
-    /* modes */
-    case ID_B_MODE_APPLY:
-        if (g_selMode >= 0) {
-            if (Modes_Apply(g_selMode) == 0) Ui_Notify(L"Mode applied");
-            else Ui_Notify(L"Windows refused that mode");
-            build();
-        } else Ui_Notify(L"Pick a mode first");
-        return 1;
-    case ID_B_MODE_NATIVE: {
-        int n = Modes_Count(), nat = 0;
-        for (int i = 0; i < n; i++) if (Modes_Get(i)->native) { nat = i; break; }
-        if (Modes_Apply(nat) == 0) Ui_Notify(L"Back to native");
-        build(); return 1; }
-    case ID_B_OPENHDR:
-        Modes_OpenHdr(); return 1;
-    case ID_B_OPENFOLDER: {
-        wchar_t cmd[8 + MAX_PATH];
-        wsprintfW(cmd, L"explorer %s", g_appdata);
-        ShellExecuteW(NULL, L"open", g_appdata, NULL, NULL, SW_SHOWNORMAL);
-        return 1; }
-    }
-    return 0;
+    apply_current_look(src ? src : L"apply");
+    Xh_Update(&g_xh);
 }
 
-int Ui_MouseDown(int x, int y)
+/* ---------------- window proc ---------------- */
+
+static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
-    Widget *k = hit(x, y);
-    if (!k) return 0;
-    switch (k->type) {
-    case WT_SLIDER:
-        g_active = k->id;
-        SetCapture(g_ui_hwnd);
-        slider_from_x(k, x);
-        build(); Main_ApplyAll();
+    switch (m) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        int cw, ch;
+        RECT rc;
+        GetClientRect(h, &rc);
+        cw = rc.right; ch = rc.bottom;
+
+        RECT all = { 0, 0, cw, ch };
+        fill(dc, all, COL_BG);
+        draw_sidebar(dc, cw, ch);
+        draw_topbar(dc, cw);
+
+        /* content */
+        HDC cdc = CreateCompatibleDC(NULL);
+        HBITMAP bmp = (HBITMAP)CreateCompatibleBitmap(dc, cw - SIDEBAR_W,
+                                                      ch - TOP_H - STATUS_H);
+        HBITMAP ob = (HBITMAP)SelectObject(cdc, bmp);
+        fill(cdc, (RECT){ 0, 0, cw - SIDEBAR_W, ch - TOP_H - STATUS_H }, COL_BG);
+        for (int i = 0; i < g_nw; i++) {
+            Widget *p = &g_w[i];
+            p->r.top += TOP_H - g_scroll;
+            p->r.bottom += TOP_H - g_scroll;
+            draw_widget(cdc, p);
+            p->r.top -= TOP_H - g_scroll;
+            p->r.bottom -= TOP_H - g_scroll;
+        }
+        BitBlt(dc, SIDEBAR_W, TOP_H, cw - SIDEBAR_W, ch - TOP_H - STATUS_H,
+               cdc, 0, 0, SRCCOPY);
+        SelectObject(cdc, ob);
+        DeleteObject(bmp);
+        DeleteDC(cdc);
+
+        draw_statusbar(dc, cw, ch);
+        draw_toast(dc, cw, ch);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
         return 1;
-    case WT_TOGGLE:
-        Ui_Exec(k->id);
-        return 1;
-    case WT_BTN:
-    case WT_PRIMARY:
-    case WT_GHOST:
-        Ui_Exec(k->id);
-        return 1;
-    case WT_SIDE:
-        Ui_Exec(k->id);
-        return 1;
-    case WT_ROW:
-        if (k->id >= ID_PROF_BASE && k->id < ID_PROF_BASE + 16) {
-            g_selProf = k->id - ID_PROF_BASE;
-            Profile *p = Prof_Get(g_selProf);
-            if (p) { Ui_LoadLook(&p->look); Ui_Notify(p->name); Main_ApplyAll(); }
-            build();
-        } else if (k->id >= ID_PROF_RUN && k->id < ID_PROF_RUN + 25) {
-            const wchar_t *exe = Prof_RunningGet(k->flags);
-            if (exe[0]) {
-                wchar_t nm[64];
-                lstrcpynW(nm, exe, 64);
-                wchar_t *dot = wcsrchr(nm, L'.');
-                if (dot) *dot = 0;
-                int idx = Prof_Add(nm, exe, &g_look);
-                g_selProf = idx;
-                build();
-                Ui_Notify(L"Profile added");
+
+    case WM_SIZE:
+        if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+        return 0;
+
+    case WM_LBUTTONDOWN: {
+        int x = GET_X_LPARAM(l), y = GET_Y_LPARAM(l);
+        if (x < SIDEBAR_W) {
+            if (y >= 76 && y < 76 + PAGE * 42) {
+                int pg = (y - 76) / 42;
+                if (pg < PAGE) { g_page = pg; g_scroll = 0; refresh(); }
             }
-        } else if (k->id >= ID_MODE_BASE && k->id < ID_MODE_BASE + 32) {
-            g_selMode = k->flags;
-            build();
+            return 0;
         }
-        return 1;
-    case WT_SCENE:
-        if (k->id >= ID_SCENE_BASE && k->id < ID_SCENE_BASE + 8) {
-            int cnt; const SceneDef *sc = Scene_List(&cnt);
-            int i = k->id - ID_SCENE_BASE;
-            if (i < cnt) {
-                g_look = sc[i].look;
-                build(); Main_ApplyAll();
-                Ui_Notify(sc[i].name);
+        int cy = y - TOP_H;
+        if (g_hotcapId >= 0) {
+            /* clicks cancel capture */
+            g_hotcapId = -1;
+            toast(L"Capture cancelled");
+            return 0;
+        }
+        int hit = hit_widget(x, cy);
+        if (hit >= 0) {
+            /* find widget index by id for drag/focus */
+            for (int i = g_nw - 1; i >= 0; i--) {
+                if (g_w[i].id != hit) continue;
+                if (g_w[i].type == W_SLIDER) {
+                    g_dragIdx = i;
+                    Widget *p = &g_w[i];
+                    int track = p->r.right - 70 - p->r.left;
+                    float t = (float)(x - p->r.left) / (float)track;
+                    slider_set_value(p, p->smin + t * (p->smax - p->smin));
+                    SetCapture(h);
+                    InvalidateRect(h, NULL, FALSE);
+                    return 0;
+                }
+                if (g_w[i].type == W_SEARCH) {
+                    g_focusId = hit;
+                    SetFocus(h);
+                    InvalidateRect(h, NULL, FALSE);
+                    return 0;
+                }
+                break;
+            }
+            on_action(hit, 0);
+        } else if (g_focusId >= 0) {
+            g_focusId = -1;
+            InvalidateRect(h, NULL, FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (g_dragIdx >= 0 && g_dragIdx < g_nw) {
+            Widget *p = &g_w[g_dragIdx];
+            int x = GET_X_LPARAM(l);
+            int track = p->r.right - 70 - p->r.left;
+            float t = (float)(x - p->r.left) / (float)track;
+            slider_set_value(p, p->smin + t * (p->smax - p->smin));
+            /* live preview while dragging */
+            intptr_t v = (intptr_t)p->arg1;
+            if (v >= (intptr_t)&g_look && v < (intptr_t)(&g_look + 1))
+                Eng_ApplyLook(&g_look, g_colorMon, g_colorMon < 0);
+            else if (v >= (intptr_t)&g_xh && v < (intptr_t)(&g_xh + 1))
+                Xh_Update(&g_xh);
+            InvalidateRect(h, NULL, FALSE);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (g_dragIdx >= 0 && g_dragIdx < g_nw) {
+            slider_apply(&g_w[g_dragIdx]);
+            g_dragIdx = -1;
+            ReleaseCapture();
+            refresh();
+        }
+        return 0;
+
+    case WM_MOUSEWHEEL: {
+        int delta = GET_WHEEL_DELTA_WPARAM(w);
+        g_scroll -= (delta / WHEEL_DELTA) * 60;
+        if (g_scroll < 0) g_scroll = 0;
+        if (g_scroll > g_scrollMax) g_scroll = g_scrollMax;
+        InvalidateRect(h, NULL, FALSE);
+        return 0;
+    }
+
+    case WM_KEYDOWN:
+        if (g_hotcapId >= 0) {
+            hotcap_handle_key(w);
+            return 0;
+        }
+        if (g_focusId < 0) return 0;
+        if (w == VK_BACK) {
+            /* remove last utf-8 char */
+            int n = (int)strlen(g_focusBuf());
+            if (n > 0) {
+                char *b = g_focusBuf();
+                while (n > 0 && (b[n - 1] & 0xC0) == 0x80) n--;
+                b[n - 1] = 0;
+                sync_focus_buf();
+                refresh();
+            }
+            return 0;
+        }
+        if (w == VK_ESCAPE) {
+            g_focusId = -1;
+            InvalidateRect(h, NULL, FALSE);
+            return 0;
+        }
+        if (w == VK_RETURN) {
+            if (g_page == PG_PRESETS && g_focusId == A_SEARCH)
+                on_action(A_PRESET_SAVE, 0);
+            g_focusId = -1;
+            return 0;
+        }
+        return 0;
+    case WM_CHAR:
+        if (g_focusId < 0) return 0;
+        if (w >= 0x20 && w < 0x7F) {
+            char *b = g_focusBuf();
+            if (strlen(b) < 60) {
+                b[strlen(b)] = (char)w;
+                b[strlen(b)] = 0;
+                sync_focus_buf();
+                if (g_page == PG_GAMES) refresh();
+                else InvalidateRect(h, NULL, FALSE);
             }
         }
-        return 1;
-    case WT_SHAPE:
-        Ui_Exec(k->id);
-        return 1;
-    case WT_SWATCH:
-        if (k->id >= ID_SWATCH_BASE && k->id < ID_SWATCH_BASE + 10) {
-            g_xh.color = (COLORREF)_wtoi(k->val);
-            build(); Main_ApplyAll();
-        } else if (k->id >= ID_SWATCH_O && k->id < ID_SWATCH_O + 10) {
-            g_xh.ocolor = (COLORREF)_wtoi(k->val);
-            build(); Main_ApplyAll();
+        return 0;
+
+    case WM_TIMER:
+        if (w == 1) {
+            Phone_ProcessPending();
+            /* periodic light refresh for live labels (every ~4s) */
+            static DWORD last = 0;
+            if (GetTickCount() - last > 4000) {
+                last = GetTickCount();
+                refresh();
+            }
         }
-        return 1;
-    }
-    return 0;
-}
+        return 0;
 
-int Ui_MouseMove(int x, int y, int dragging)
-{
-    Widget *k = hit(x, y);
-    int id = k ? k->id : 0;
-    if (g_active && dragging) {
-        Widget *a = NULL;
-        for (int i = 0; i < g_nw; i++) if (g_w[i].id == g_active) a = &g_w[i];
-        if (a) {
-            float before = a->vmin;
-            (void)before;
-            slider_from_x(a, x);
-            Main_ApplyAll();
-            return -1; /* repaint */
+    case WM_APP_GAME: {
+        static CxLook g_baseLook;
+        static int haveBase = 0;
+        if (!Gw_Process()) return 0;
+        int gi = Gw_CurrentGame();
+        wchar_t fg[96];
+        lstrcpynW(fg, Gw_ForegroundExe(), 96);
+        const CxGame *g = NULL;
+        {
+            char *u8 = Main_Utf16ToUtf8Alloc(fg);
+            g = u8 ? CxGames_FindExe(u8) : NULL;
+            free((void *)u8);
         }
+        if (g && gi >= 0 && g_settings.autoApply) {
+            const CxGame *gg = CxGames_Get(gi);
+            int li = Gw_GameLook(gi);
+            if (li < 0 || li >= gg->nlooks) li = 0;
+            if (!haveBase) { g_baseLook = g_look; haveBase = 1; }
+            g_look = gg->looks[li].look;
+            g_look.enabled = 1;
+            CxLook_Clamp(&g_look);
+            apply_current_look(L"game watch");
+            Main_Log(L"INFO", fg);
+        } else if (!g && g_settings.restoreOnExit) {
+            if (haveBase) {
+                g_look = g_baseLook;
+                CxLook_Clamp(&g_look);
+                apply_current_look(L"game left");
+                haveBase = 0;
+            }
+        }
+        refresh();
+        return 0;
     }
-    if (id != g_hover) { g_hover = id; return -1; } /* repaint */
-    return 0;
-}
 
-void Ui_MouseUp(int x, int y)
-{
-    (void)x; (void)y;
-    if (g_active) { g_active = 0; ReleaseCapture(); build(); }
-}
+    case WM_HOTKEY:
+        Main_HotkeyAction((int)w);
+        refresh();
+        return 0;
 
-int Ui_Hover(int x, int y)
-{
-    Widget *k = hit(x, y);
-    return k ? k->id : 0;
-}
+    case WM_DISPLAYCHANGE:
+        MonRefresh();
+        Modes_Refresh();
+        /* driver may have reset ramps \u2014 re-apply once */
+        apply_current_look(L"display change");
+        refresh();
+        return 0;
 
-int Ui_Wheel(int x, int y, int delta)
-{
-    (void)x;
-    Widget *k = hit(x, y);
-    int id = k ? k->id : 0;
-    if (g_panel == ID_SIDE_MODES && y > S(240) && y < S(640)) {
-        g_modeScroll = clampi(g_modeScroll - (delta > 0 ? 1 : -1), 0,
-                              Modes_Count() - 1);
-        build();
-        return 1;
+    case WM_CLOSE:
+        if (g_settings.minTray && !g_quit) {
+            ShowWindow(h, SW_HIDE);
+            Main_TrayBlink();
+        } else {
+            DestroyWindow(h);
+        }
+        return 0;
+    case WM_DESTROY:
+        g_quit = 1;
+        Main_Save();
+        Gw_Shutdown();
+        Phone_Stop();
+        Xh_Shutdown();
+        Eng_Shutdown();
+        Prev_Shutdown();
+        Main_ShutdownTray();
+        PostQuitMessage(0);
+        return 0;
     }
-    if (g_panel == ID_SIDE_GAMES && id == 0 && y > S(600)) {
-        g_runScroll = clampi(g_runScroll + (delta > 0 ? -1 : 1), 0, 12);
-        build();
-        return 1;
+    return DefWindowProcW(h, m, w, l);
+}
+
+/* focus buffer helpers */
+static char *g_focusBuf(void)
+{
+    /* the A_SEARCH widget on the current page */
+    for (int i = 0; i < g_nw; i++)
+        if (g_w[i].type == W_SEARCH && g_w[i].id == A_SEARCH)
+            return g_w[i].buf;
+    return g_searchBuf;
+}
+static void sync_focus_buf(void)
+{
+    if (g_page == PG_GAMES) lstrcpynA(g_searchBuf, g_focusBuf(), 160);
+}
+
+/* ---------------- UI init ---------------- */
+
+void UI_Init(HINSTANCE inst)
+{
+    WNDCLASSEXW wc;
+    memset(&wc, 0, sizeof wc);
+    wc.cbSize = sizeof wc;
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = NULL;
+    wc.lpszClassName = CX_CLASS;
+    if (!RegisterClassExW(&wc)) return;
+
+    int w = 1400, h = 880;
+    g_hwnd = CreateWindowExW(0, CX_CLASS, L"ChromaX \u2014 display control center",
+                             WS_OVERLAPPEDWINDOW,
+                             CW_USEDEFAULT, CW_USEDEFAULT, w, h,
+                             NULL, NULL, inst, NULL);
+    if (!g_hwnd) return;
+
+    /* remember look from crash recovery */
+    CxLook lkg;
+    if (Eng_LoadLast(&lkg)) {
+        g_look = lkg;
+        toast(L"Restored last-applied look (crash recovery)");
     }
-    return 0;
+
+    g_selLook[0] = 0;
+    for (int i = 0; i < 32; i++) if (g_selLook[i] < 0) g_selLook[i] = 0;
+
+    SetTimer(g_hwnd, 1, 250, NULL);
+    ShowWindow(g_hwnd, SW_SHOW);
+    UpdateWindow(g_hwnd);
+    refresh();
 }
-
-/* ---------------- api ---------------- */
-
-void Ui_Init(HWND hwnd, HINSTANCE inst)
-{
-    g_ui_hwnd = hwnd;
-    (void)inst;
-    HDC dc = GetDC(hwnd);
-    g_sc = GetDeviceCaps(dc, LOGPIXELSX) / 96.f;
-    ReleaseDC(hwnd, dc);
-    if (g_sc < 0.5f) g_sc = 1.f;
-    mkfonts();
-    /* start-with-windows state */
-    HKEY rk;
-    if (RegOpenKeyW(HKEY_CURRENT_USER,
-                    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", &rk) == ERROR_SUCCESS) {
-        DWORD t = 0;
-        g_startwin = (RegQueryValueExW(rk, L"ChromaX", NULL, &t, NULL, NULL) == ERROR_SUCCESS);
-        RegCloseKey(rk);
-    }
-    build();
-}
-
-void Ui_Free(void)
-{
-    DeleteObject(g_fBig); DeleteObject(g_fH1); DeleteObject(g_fH2);
-    DeleteObject(g_fBody); DeleteObject(g_fSmall); DeleteObject(g_fMono);
-}
-
-void Ui_SetPanel(int side)
-{
-    g_panel = side;
-    static const wchar_t *t[] = { L"Display", L"Game looks", L"Scenes",
-                                  L"Crosshair", L"Resolution & refresh", L"Settings" };
-    int i = clampi(side - ID_SIDE_BASE, 0, 5);
-    lstrcpynW(g_title, t[i], 64);
-    build();
-}
-
-int Ui_Panel(void) { return g_panel; }
-Look *Ui_Look(void) { return &g_look; }
-
-void Ui_LoadLook(const Look *lk)
-{
-    g_look = *lk;
-    build();
-}
-
-void Ui_Title(const wchar_t *t) { lstrcpynW(g_title, t, 64); }
-
-void Ui_Notify(const wchar_t *msg)
-{
-    lstrcpynW(g_toast, msg, 128);
-    g_toastT = GetTickCount();
-    if (g_ui_hwnd) InvalidateRect(g_ui_hwnd, NULL, FALSE);
-}
-
-void Ui_SyncProfiles(void) { build(); }
-int  Ui_SelProfile(void) { return g_selProf; }
-void Ui_SelProfileSet(int i) { g_selProf = i; }
-void Ui_RebuildPanel(void) { build(); }
-
-void Ui_GetXh(XhCfg *out) { *out = g_xh; }
-void Ui_SetXh(const XhCfg *in) { g_xh = *in; build(); }
-int  Ui_Detect(void) { return Prof_Detect(); }
-int  Ui_StartWin(void) { return g_startwin; }
-int  Ui_PhoneOn(void) { return g_phoneon; }
-
-void Ui_SyncStartWin(int on) { g_startwin = on; }
-
-int Ui_ScaleLogicalW(void) { return (int)(WIN_W * g_sc); }
-int Ui_ScaleLogicalH(void) { return (int)(WIN_H * g_sc); }
-int Ui_Scaled(int v) { return S(v); }

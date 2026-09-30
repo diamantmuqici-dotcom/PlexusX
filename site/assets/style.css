@@ -380,6 +380,26 @@ p{margin:0 0 1em}
   border-left:4px solid #c6ff3d;border-bottom:4px solid #c6ff3d;transform:rotate(-45deg);
   box-shadow:none;
 }
+.cross[data-shape="square"] .ch-h,.cross[data-shape="square"] .ch-v,
+.cross[data-shape="t"] .ch-h,.cross[data-shape="t"] .ch-v,
+.cross[data-shape="fours"] .ch-h,.cross[data-shape="fours"] .ch-v{display:none}
+.cross[data-shape="square"]::after{
+  content:"";position:absolute;width:52px;height:52px;left:-26px;top:-26px;
+  border:3.5px solid #c6ff3d;border-radius:6px;box-shadow:0 0 0 1.5px rgba(0,0,0,.9);
+}
+.cross[data-shape="t"]::before{
+  content:"";position:absolute;width:44px;height:3.5px;left:-22px;top:-22px;
+  background:#c6ff3d;box-shadow:0 0 0 1.5px rgba(0,0,0,.9);
+}
+.cross[data-shape="t"]::after{
+  content:"";position:absolute;width:3.5px;height:44px;left:-1.75px;top:-22px;
+  background:#c6ff3d;box-shadow:0 0 0 1.5px rgba(0,0,0,.9);
+}
+.cross[data-shape="fours"]::before{
+  content:"";position:absolute;width:6px;height:6px;left:-17px;top:-17px;
+  background:#c6ff3d;border-radius:50%;
+  box-shadow:14px 0 0 0 #c6ff3d, 0 14px 0 0 #c6ff3d, 14px 14px 0 0 #c6ff3d;
+}
 .cross-shapes{display:flex;gap:10px;flex-wrap:wrap}
 .shape{
   background:var(--card);border:1px solid var(--line);color:var(--sub);border-radius:10px;

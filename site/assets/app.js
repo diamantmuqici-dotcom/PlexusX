@@ -125,9 +125,14 @@ const stageImg = $("#stageImg");
 let current = GAMES[0];
 const stRange = { sat: $("#stSat"), bri: $("#stBri"), con: $("#stCon"), temp: $("#stTemp"), gam: $("#stGam") };
 
-function code(g) {
-  const p = n => String(Math.abs(n)).padStart(2, "0");
-  return `CHX-${g.id.toUpperCase()}-${g.sat}-${g.bri < 0 ? "m" : ""}${p(g.bri)}-${p(g.con)}-${p(g.temp)}`;
+function presetJson(g, s) {
+  const t = Math.round(Math.min(10000, Math.max(3000, 6500 + s.temp * 70)));
+  return JSON.stringify({
+    name: g.name + " look",
+    version: 2,
+    look: { saturation: s.sat, brightness: 100 + s.bri, contrast: 100 + s.con,
+            temperature: t, gamma: +s.gamma.toFixed(2) }
+  }, null, 2);
 }
 function renderStage() {
   const g = current;
@@ -141,7 +146,7 @@ function renderStage() {
   $("#stConVal").textContent = sgn(s.con);
   $("#stTempVal").textContent = sgn(s.temp);
   $("#stGamVal").textContent = s.gamma.toFixed(2);
-  $("#stCode").textContent = code({ ...g, sat: s.sat, bri: s.bri, con: s.con, temp: s.temp });
+  $("#stCode").textContent = presetJson(g, s);
   Object.values(stRange).forEach(paintRange);
 }
 function selectGame(g, push = true) {
@@ -189,7 +194,7 @@ async function copy(text, label) {
   }
   toast(label + " copied ✓");
 }
-$("#stCopy").addEventListener("click", () => copy($("#stCode").textContent, "Preset code"));
+$("#stCopy").addEventListener("click", () => copy($("#stCode").textContent, "JSON preset"));
 $("#copySha").addEventListener("click", () => copy($("#sha").textContent, "SHA-256"));
 $("#copyUrl")?.addEventListener("click", () => copy("http://192.168.1.24:8777", "Phone link"));
 
@@ -215,7 +220,7 @@ $$(".mock-slider input").forEach(inp => {
     const out = inp.parentElement.querySelector("output");
     const min = +inp.min;
     if (min < 0) out.textContent = sgn(v) + (inp.max <= 60 ? "°" : "%");
-    else if (inp.max <= 300 && inp.min === 100) { out.textContent = v + "%"; }
+    else if (inp.max === 300) { out.textContent = v + "%"; }
     else out.textContent = (v / 100).toFixed(2);
     if (inp.id === "mockSat") $("#mockSatOut").textContent = v + "%";
   });
