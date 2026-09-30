@@ -685,6 +685,7 @@ void Main_Save(void)
     CxJson_ObjSet(set, "startWin", CxJson_NewBool(g_settings.startWin));
     CxJson_ObjSet(set, "minTray", CxJson_NewBool(g_settings.minTray));
     CxJson_ObjSet(set, "trayNotify", CxJson_NewBool(g_settings.trayNotify));
+    CxJson_ObjSet(set, "highContrast", CxJson_NewBool(g_settings.highContrast));
 
     CxJson *favs = CxJson_NewArr();
     for (int i = 0; i < g_nfavs; i++) CxJson_ArrAdd(favs, CxJson_NewNum(g_favs[i]));
@@ -807,6 +808,7 @@ void Main_Load(void)
                         g_settings.startWin = CxJson_GetBool(set, "startWin", 0);
                         g_settings.minTray = CxJson_GetBool(set, "minTray", 1);
                         g_settings.trayNotify = CxJson_GetBool(set, "trayNotify", 1);
+                        g_settings.highContrast = CxJson_GetBool(set, "highContrast", 0);
                     }
                     CxJson *favs = CxJson_Get(j, "favorites");
                     g_nfavs = 0;
@@ -896,6 +898,7 @@ void Main_ResetSettings(void)
     g_settings.delayMs = 500;
     g_settings.minTray = 1;
     g_settings.trayNotify = 1;
+    g_settings.highContrast = 0;
     g_nfavs = 0;
     g_gaming = 0;
     for (int i = 0; i < CxGames_Count(); i++) Gw_SetGameLook(i, 0);
@@ -1397,6 +1400,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmdLine, int nCmdSho
 
     setup_appdirs();
     Main_Load();
+    UI_SetHighContrast(g_settings.highContrast);
 
     MonRefresh();
     Modes_Refresh();

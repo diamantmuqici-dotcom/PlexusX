@@ -56,10 +56,10 @@
         <a class="btn btn-ghost btn-lg" href="#difference">See the difference</a>
       </div>
       <ul class="chips">
-        <li>423 KB portable exe</li>
+        <li>425 KB portable exe</li>
         <li>SHA-256 published</li>
         <li>Open source · Apache-2.0</li>
-        <li>No admin, no installer</li>
+        <li>No admin, no installer required</li>
       </ul>
     </div>
 
@@ -108,7 +108,7 @@
         <h3>Is it a virus?</h3>
         <p>No — and don't take our word for it. We publish the SHA-256 of the exact file
           on this page. Hash it yourself with <code>certutil</code>, upload it to VirusTotal,
-          read the report. It's a single portable exe: no installer, no drivers, no admin.</p>
+          read the report. It's a single portable exe: no installer needed (an optional shortcut-setup script is in the release), no drivers, no admin.</p>
         <a href="#download" class="alink">Check the file ↓</a>
       </article>
       <article class="qcard reveal">
@@ -383,7 +383,7 @@
             <div class="mock-toggle-row"><span>Phone panel on this Wi-Fi</span><button class="sw on" aria-pressed="true"><i></i></button></div>
             <div class="mock-url mono">http://192.168.1.24:8777 <button class="mbtn tiny" id="copyUrl">Copy link</button></div>
             <p class="mock-div">ABOUT</p>
-            <p class="mock-about">ChromaX v2.0.0 · Windows 10/11 · single portable exe · no installer, no admin.<br>
+            <p class="mock-about">ChromaX v2.0.0 · Windows 10/11 · single portable exe · optional shortcut setup · no admin.<br>
               No account, no telemetry, no phone-home. Settings live in a plain <code>config.json</code>; backups and a last-known-good snapshot restore your display after a crash.<br>
               What it never does: read game memory · edit game files · inject code · install a driver.</p>
           </div>
@@ -414,7 +414,7 @@
       <article class="feat reveal"><span class="fico">⌨</span><h3>Hotkeys everywhere</h3><p>Ctrl+Alt+arrows for saturation, 0 to reset, X for crosshair, E for the whole look. Works over any game.</p></article>
       <article class="feat reveal"><span class="fico">◫</span><h3>Per-monitor everything</h3><p>Every control targets the monitor you pick — or all of them. Displays are matched by hardware identity, so a rearranged dock can't swap your looks around.</p></article>
       <article class="feat reveal"><span class="fico">⟲</span><h3>Backup &amp; last-known-good</h3><p>One click snapshots your whole setup. If a change ever makes things worse, the last known-good state restores automatically — and originals come back on a crash.</p></article>
-      <article class="feat reveal"><span class="fico">⌘</span><h3>Portable &amp; quiet</h3><p>One file, no installer, no admin, no telemetry, no account. Config is a readable <code>config.json</code> you can delete.</p></article>
+      <article class="feat reveal"><span class="fico">⌘</span><h3>Portable &amp; quiet</h3><p>One file, no installer needed, no admin, no telemetry, no account. Config is a readable <code>config.json</code> you can delete.</p></article>
     </div>
   </div>
 </section>
@@ -492,12 +492,12 @@
         <a class="btn btn-primary btn-lg" href="download/ChromaX.exe" download="ChromaX.exe">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
           Download ChromaX.exe</a>
-        <p class="dl-meta">Windows 10 / 11 · x64 · 423 KB · v2.0.0 · Apache-2.0</p>
+        <p class="dl-meta">Windows 10 / 11 · x64 · 425 KB · v2.0.0 · Apache-2.0</p>
       </div>
       <div class="dl-right">
         <div class="hash-card">
           <p class="hash-label">SHA-256 — the exact file above</p>
-          <code class="hash mono" id="sha">5f6e8c666c7ad4100048464ce19263cfdde0efcdfc529ffc6616683f1f07fd59</code>
+          <code class="hash mono" id="sha">4dce9f9fb8006f199a7d872763265db106a94e9867354740a33c7342cf7aea3f</code>
           <button class="btn btn-ghost btn-sm" id="copySha">Copy hash</button>
           <p class="hash-note">Verify it yourself before running — open <b>Downloads</b> in Explorer,
             type <code>cmd</code> in the address bar, Enter, then:</p>
@@ -542,6 +542,8 @@
             <li>Crosshair grows outline opacity and a cursor-following (dynamic) mode; save unlimited personal crosshairs.</li>
             <li>Full keyboard navigation (Tab / Enter / arrows), hover tooltips, double-click any slider for direct numeric entry.</li>
             <li>Tools page: RUN PROFILE TEST verifies apply + restore end to end; profile history entries are restorable from Home.</li>
+            <li>Accessibility: high-contrast theme under Settings &rarr; Appearance; the phone panel lists connected device IPs.</li>
+            <li>The release now includes optional shortcut setup / uninstall scripts; the preset JSON schema is documented in the README.</li>
           </ul>
         </div>
       </div>
@@ -554,7 +556,7 @@
             <li>GPU gamma per monitor, originals written to disk first — restores after a crash, not just a clean exit.</li>
             <li>Eight scenes, per-game profiles with foreground auto-switch, crosshair designer with six shapes.</li>
             <li>Resolution &amp; refresh tab with stretched 4:3 presets, phone panel on port 8777, tray icon, hotkeys.</li>
-            <li>Portable single exe. No installer, no admin, no account, no network calls.</li>
+            <li>Portable single exe. No installer required (optional shortcut setup included). No admin, no account, no network calls.</li>
           </ul>
         </div>
       </div>
@@ -571,8 +573,9 @@
     <div class="faq reveal">
       <details open>
         <summary>Is it a virus? Is it safe to install?</summary>
-        <div><p>There is nothing to install — ChromaX.exe is a single portable file, no installer, no
-          driver, no admin prompt. We publish its SHA-256 on the download card; hash your copy with
+        <div><p>There is nothing to install — ChromaX.exe is a single portable file, no installer required,
+          no driver, no admin prompt. (An optional setup script in the release adds Start Menu / desktop
+          shortcuts if you want them.) We publish its SHA-256 on the download card; hash your copy with
           <code>certutil</code> and compare, then look that hash up on VirusTotal and read the actual
           report. Windows may say “unknown publisher” because the file isn't code-signed — that costs
           money and says nothing about behaviour. The source is Apache-2.0 licensed in this repository, so

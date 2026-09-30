@@ -84,7 +84,13 @@ slot order, so rearranging the desk doesn't swap your looks around.
 
 **Phone control** — a LAN-only HTTP control panel on port 8777, active only while the
 toggle is on, guarded by a **random pairing token** generated per run (no hardcoded
-password). Off means the port is closed.
+password). Off means the port is closed. The app shows the LAN address, the token,
+and a live list of connected device IPs.
+
+**Accessibility** — full keyboard navigation (Tab / Shift+Tab to move, Enter / Space
+to activate, arrow keys to step the focused slider), a visible focus rectangle,
+hover tooltips on every control, and a high-contrast theme under
+Settings → Appearance.
 
 **Backup & recovery** — one-click backup/restore of the whole setup, a last-known-good
 snapshot that restores automatically, and original gamma ramps written to disk before
@@ -130,6 +136,16 @@ or the [releases](https://github.com/diamantmuqici-dotcom/PlexusX/releases) page
 run it. It stores `config.json` in `%APPDATA%\ChromaX`, restores your original
 display state on exit, and uninstalls by deleting the file.
 
+### Optional shortcut setup
+
+If you want a classic installed layout instead of a bare EXE, run
+`ChromaX-setup.bat` (in the release, next to the EXE) from a folder that contains
+`ChromaX.exe`. No administrator rights are needed: it copies the EXE to
+`%LOCALAPPDATA%\Programs\ChromaX`, creates a Start Menu shortcut, and asks whether
+to add a desktop shortcut and a *start with Windows* entry (HKCU only).
+`ChromaX-uninstall.bat` reverses all of it. Settings stay in `%APPDATA%\ChromaX`
+either way.
+
 ### Portable mode
 
 The default layout *is* portable: one exe, config in `%APPDATA%`, nothing else.
@@ -156,6 +172,52 @@ identical but carry different hashes. Each published file is verified against it
 own companion hash — that is the guarantee. The exe is not code-signed (that costs
 money per certificate and says nothing about behaviour); the Apache-2.0 source is
 right here so you can read what every line does.
+
+## Preset JSON schema
+
+Profiles are shared as plain JSON files via the **Import** / **Export** buttons on
+the Presets page (schema version 2):
+
+```json
+{
+  "app": "ChromaX",
+  "version": 2,
+  "name": "Rust Night",
+  "category": "game",
+  "color": {
+    "sat": 185, "vibrance": 165, "brightness": 105, "contrast": 112,
+    "gamma": 1.08, "temperature": 6500, "tint": 0,
+    "red": 100, "green": 100, "blue": 100,
+    "shadows": 112, "highlights": 96, "blacklevel": 100, "whitepoint": 100,
+    "sharpness": 100, "clarity": 100, "intensity": 100,
+    "hue": 0, "dehaze": 100, "enabled": true
+  },
+  "crosshair": {
+    "on": false, "shape": 1, "size": 24, "gap": 6, "thick": 2,
+    "opacity": 100, "outline": true, "color": 4294967295, "ocolor": 0,
+    "rotation": 0, "dot": true
+  },
+  "display": { "w": 2560, "h": 1440, "hz": 144 },
+  "automation": { "on_exit": true, "delay_ms": 500 }
+}
+```
+
+- `color` — 100 is neutral for every gain, 6500 K / 1.0 gamma are neutral. Values
+  are clamped into their documented ranges on import; unknown fields are ignored.
+- `crosshair` — `shape` is an index into the built-in shape list, `color` /
+  `ocolor` are 0xRRGGBB integers, `opacity` is 0–100 %.
+- `display` — optional; a value of `0` means "leave that setting alone", and the
+  triple is range-checked (320×240 … 12800×7200, ≤ 1000 Hz) before anything is
+  applied. Presets saved from the UI intentionally export zeros here so an
+  imported preset never silently changes your display mode.
+- `automation` — `on_exit` restores the previous configuration when the game
+  quits; `delay_ms` is the wait before applying (0–30000).
+- `category` — a free-form label (`look`, `game`, `display`, `monitor`, `custom`).
+
+Imports are parsed with the same strict JSON parser the app uses for its own
+config: malformed files are rejected with a message and nothing is applied. A
+preset is data, not code — there is no shell, no expressions and nothing dynamic
+in the import path.
 
 ## Building
 

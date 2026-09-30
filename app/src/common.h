@@ -273,6 +273,7 @@ extern int       g_gaming;
 typedef struct Settings {
     int autoApply, restoreOnExit, delayMs;
     int startWin, minTray, trayNotify;
+    int highContrast;
 } Settings;
 extern Settings  g_settings;
 
@@ -291,6 +292,7 @@ void  Main_TrayBlink(void);
 void  Main_ShutdownTray(void);
 
 void  UI_ApplyLook(const wchar_t *source);
+void  UI_SetHighContrast(int on);           /* settings > appearance */
 void  UI_Toast(const wchar_t *s);
 void  UI_Refresh(void);
 void  UI_Init(HINSTANCE inst);

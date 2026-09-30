@@ -11,20 +11,36 @@
 
 /* ---------------- theme ---------------- */
 
-#define COL_BG      RGB(15, 17, 23)
-#define COL_BG1     RGB(22, 26, 35)
-#define COL_BG2     RGB(29, 34, 48)
-#define COL_BG3     RGB(38, 45, 63)
-#define COL_LINE    RGB(38, 44, 59)
-#define COL_ACC     RGB(62, 214, 176)
-#define COL_ACCD    RGB(24, 92, 78)
-#define COL_ACC2    RGB(124, 92, 255)
-#define COL_TXT     RGB(232, 236, 244)
-#define COL_DIM     RGB(139, 147, 167)
-#define COL_DIM2    RGB(96, 104, 124)
-#define COL_OK      RGB(74, 222, 128)
-#define COL_WARN    RGB(250, 204, 21)
-#define COL_ERR     RGB(255, 107, 107)
+static COLORREF COL_BG      = RGB(15, 17, 23);
+static COLORREF COL_BG1     = RGB(22, 26, 35);
+static COLORREF COL_BG2     = RGB(29, 34, 48);
+static COLORREF COL_BG3     = RGB(38, 45, 63);
+static COLORREF COL_LINE    = RGB(38, 44, 59);
+static COLORREF COL_ACC     = RGB(62, 214, 176);
+static COLORREF COL_ACCD    = RGB(24, 92, 78);
+static COLORREF COL_ACC2    = RGB(124, 92, 255);
+static COLORREF COL_TXT     = RGB(232, 236, 244);
+static COLORREF COL_DIM     = RGB(139, 147, 167);
+static COLORREF COL_DIM2    = RGB(96, 104, 124);
+static COLORREF COL_OK      = RGB(74, 222, 128);
+static COLORREF COL_WARN    = RGB(250, 204, 21);
+static COLORREF COL_ERR     = RGB(255, 107, 107);
+
+/* High-contrast theme variant (Settings > Appearance): brighter text,
+ * stronger borders and accents.  Backgrounds stay the same. */
+void UI_SetHighContrast(int on)
+{
+    COL_TXT  = on ? RGB(255, 255, 255) : RGB(232, 236, 244);
+    COL_DIM  = on ? RGB(204, 210, 222) : RGB(139, 147, 167);
+    COL_DIM2 = on ? RGB(164, 172, 190) : RGB(96, 104, 124);
+    COL_LINE = on ? RGB(90, 102, 132)  : RGB(38, 44, 59);
+    COL_ACC  = on ? RGB(104, 242, 208) : RGB(62, 214, 176);
+    COL_ACC2 = on ? RGB(168, 144, 255) : RGB(124, 92, 255);
+    COL_OK   = on ? RGB(126, 244, 168) : RGB(74, 222, 128);
+    COL_WARN = on ? RGB(253, 224, 92)  : RGB(250, 204, 21);
+    COL_ERR  = on ? RGB(255, 146, 146) : RGB(255, 107, 107);
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
 
 #define SIDEBAR_W   236
 #define TOP_H       58
@@ -121,8 +137,8 @@ enum {
     /* home history */
     A_HOME_HIST,
     /* settings */
-    A_SET_STARTWIN, A_SET_TRAY, A_SET_NOTIFY, A_SET_RESET, A_SET_PHONE,
-    A_SET_PHONE_TOKEN,
+    A_SET_STARTWIN, A_SET_TRAY, A_SET_NOTIFY, A_SET_HC, A_SET_RESET,
+    A_SET_PHONE, A_SET_PHONE_TOKEN,
     /* generic */
     A_NAV, A_SCENE, A_SEARCH
 };
@@ -1103,8 +1119,13 @@ static void build_home(void)
         W_BTN(A_HOME_BACKUP, x + 10, y + 46, 150, 26, L"Backup now", 0, 0);
         W_BTN(A_HOME_RESTORE_LKG, x + 170, y + 46, 200, 26, L"Restore last good", 0, 0);
         x += 565;
-        W_CARD(-1, x, y, 545, 78, L"Phone control",
-               L"LAN HTTP with a random pairing token. No telemetry, ever.", 0);
+        wchar_t phsub[192];
+        if (Phone_Running())
+            wsprintfW(phsub, L"LAN HTTP, random pairing token. %d device(s) connected.",
+                      Phone_DeviceCount());
+        else
+            lstrcpynW(phsub, L"LAN HTTP with a random pairing token. No telemetry, ever.", 192);
+        W_CARD(-1, x, y, 545, 78, L"Phone control", phsub, 0);
         W_BTN(A_HOME_PHONE, x + 10, y + 46, 130, 26, L"Toggle", 0, 0);
         W_BTN(A_HOME_PHONE_TOKEN, x + 150, y + 46, 130, 26, L"Show token", 0, 0);
         x = 28;
@@ -1737,9 +1758,14 @@ static void build_settings(void)
     W_toggle(A_SET_NOTIFY, x, y, 400, L"Tray notifications", &g_settings.trayNotify);
     y += 40;
 
+    W_HEAD(-1, x, y, cw, 22, L"Appearance", 0, 0);
+    y += 26;
+    W_toggle(A_SET_HC, x, y, 560, L"High contrast (brighter text, stronger borders)", &g_settings.highContrast);
+    y += 40;
+
     W_HEAD(-1, x, y, cw, 22, L"Phone control", 0, 0);
     y += 26;
-    W_card(-1, x, y, cw, 78, L"LAN pairing",
+    W_card(-1, x, y, cw, Phone_Running() ? 100 : 78, L"LAN pairing",
            Phone_Running() ? L"Running." : L"Stopped. Start it from Home or Automation.", 0);
     if (Phone_Running()) {
         wchar_t sum[128] = { 0 }, tok[64] = { 0 };
@@ -1752,8 +1778,25 @@ static void build_settings(void)
         wchar_t info[256];
         wsprintfW(info, L"%s    token: %s", sum, tok);
         W_DIM(-1, x + 12, y + 28, cw - 24, 18, info, 0, 0);
+        wchar_t devs[128] = { 0 };
+        int off = 0, nd = Phone_DeviceCount();
+        for (int i = 0; i < nd && i < 4; i++) {
+            wchar_t ip[32] = { 0 };
+            if (Phone_DeviceIp(i, ip, 32) && ip[0]) {
+                if (off + 32 < 128) {
+                    lstrcpynW(devs + off, i ? L", " : L"", 128 - off);
+                    off += (int)wcslen(devs + off);
+                    lstrcpynW(devs + off, ip, 128 - off);
+                    off += (int)wcslen(devs + off);
+                }
+            }
+        }
+        if (off == 0) lstrcpynW(devs, L"(none connected yet)", 128);
+        wchar_t dline[200];
+        wsprintfW(dline, L"Connected devices: %s", devs);
+        W_DIM(-1, x + 12, y + 50, cw - 24, 18, dline, 0, 0);
     }
-    y += 92;
+    y += Phone_Running() ? 114 : 92;
 
     W_HEAD(-1, x, y, cw, 22, L"Privacy", 0, 0);
     y += 26;
@@ -1765,12 +1808,12 @@ static void build_settings(void)
 
     W_HEAD(-1, x, y, cw, 22, L"About", 0, 0);
     y += 26;
-    W_card(-1, x, y, cw, 96, L"ChromaX 2.0.0 (x64, portable, no installer)",
+    W_card(-1, x, y, cw, 104, L"ChromaX 2.0.0 (x64 · portable · optional shortcut setup)",
            L"Apache-2.0 \u00b7 free and open. Display control via the OS colour-matrix layer, "
            L"per-monitor gamma ramps, and the standard display-settings APIs. "
            L"No game injection, no memory access, no anti-cheat interaction. "
            L"Repository and release notes: github.com/diamantmuqici-dotcom/PlexusX", 0);
-    y += 110;
+    y += 118;
     W_GHOST(A_SET_RESET, x, y, 300, 36, L"Reset all app settings", 0, 0);
     y += 50;
     (void)cw;
@@ -2442,7 +2485,13 @@ static void on_action(int id, int arg1)
         Main_Save();
         refresh();
         return;
+    case A_SET_HC:
+        g_settings.highContrast = !g_settings.highContrast;
+        UI_SetHighContrast(g_settings.highContrast);
+        Main_Save();
+        return;
     case A_SET_RESET:
+        UI_SetHighContrast(0);
         Main_ResetSettings();
         refresh();
         return;

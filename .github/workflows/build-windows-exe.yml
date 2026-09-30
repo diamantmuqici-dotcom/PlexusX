@@ -45,6 +45,8 @@ jobs:
           path: |
             site/download/ChromaX.exe
             site/download/SHA256SUMS.txt
+            install/ChromaX-setup.bat
+            install/ChromaX-uninstall.bat
 
   release:
     name: Publish GitHub release
@@ -68,7 +70,7 @@ jobs:
         run: |
           VER="${GITHUB_REF#refs/tags/}"
           cat > RELEASE_NOTES.md <<'EOF'
-          **ChromaX** — free monitor colour for Windows. One portable x64 exe, no installer, no admin, no account, no telemetry.
+          **ChromaX** — free monitor colour for Windows. One portable x64 exe plus optional shortcut setup scripts; no admin, no account, no telemetry.
 
           ## Verify the download
           ```
@@ -83,16 +85,19 @@ jobs:
           - Per-game looks that switch automatically (event-driven foreground detection).
           - HDR where Windows and your driver expose it; "not supported" otherwise.
           - Resolution & refresh manager with tested modes and rollback.
-          - Crosshair overlay (nine shapes), phone control over LAN with a random pairing token, backup & last-known-good restore.
+          - Crosshair overlay (nine shapes), phone control over LAN with a random pairing token (connected-device list), backup & last-known-good restore.
+          - `ChromaX-setup.bat` adds Start Menu / desktop shortcuts and an optional start-with-Windows entry; the portable EXE runs without it.
 
           What it never does: read game memory, edit game files, inject code, install drivers, or phone home.
           EOF
           if gh release view "$VER" >/dev/null 2>&1; then
-            gh release upload "$VER" dist/ChromaX.exe dist/SHA256SUMS.txt --clobber
+            gh release upload "$VER" dist/ChromaX.exe dist/SHA256SUMS.txt \
+              dist/ChromaX-setup.bat dist/ChromaX-uninstall.bat --clobber
           else
             gh release create "$VER" \
               --title "ChromaX $VER" \
               --notes-file RELEASE_NOTES.md \
               --target "${GITHUB_SHA}" \
-              dist/ChromaX.exe dist/SHA256SUMS.txt
+              dist/ChromaX.exe dist/SHA256SUMS.txt \
+              dist/ChromaX-setup.bat dist/ChromaX-uninstall.bat
           fi
