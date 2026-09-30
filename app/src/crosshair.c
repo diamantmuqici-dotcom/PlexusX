@@ -178,12 +178,13 @@ static HBITMAP build_bitmap(int w, int h)
     HBITMAP old = (HBITMAP)SelectObject(dc, bmp);
 
     int a = (int)(g_cfg.opacity * 255 / 100);
+    int ao = a * clampi(g_cfg.oopacity, 0, 100) / 100;
     D.px = (uint32_t *)bits;
     D.w = w; D.h = h;
     D.cx = w / 2; D.cy = h / 2;
     D.s = g_cfg.size; D.g = g_cfg.gap; D.t = g_cfg.thick;
     D.fc = (a << 24) | (GetRValue(g_cfg.color) << 16) | (GetGValue(g_cfg.color) << 8) | GetBValue(g_cfg.color);
-    D.oc = (a << 24) | (GetRValue(g_cfg.ocolor) << 16) | (GetGValue(g_cfg.ocolor) << 8) | GetBValue(g_cfg.ocolor);
+    D.oc = (ao << 24) | (GetRValue(g_cfg.ocolor) << 16) | (GetGValue(g_cfg.ocolor) << 8) | GetBValue(g_cfg.ocolor);
     D.outline = g_cfg.outline;
 
     switch (g_cfg.shape) {
@@ -229,6 +230,57 @@ static int monitor_rect(int which, RECT *out)
     return 1;
 }
 
+static int    g_followExt = 0;
+static POINT  g_followCur;
+static int    g_followKnown = 0;
+
+static void composite_at(int x, int y, int w, int h)
+{
+    BLENDFUNCTION bf;
+    bf.BlendOp = AC_SRC_OVER;
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    HDC screen = GetDC(NULL);
+    HDC mem = CreateCompatibleDC(screen);
+    HGDIOBJ old = SelectObject(mem, g_bmp);
+    SIZE sz = { w, h };
+    POINT src = { 0, 0 };
+    UpdateLayeredWindow(g_xhwnd, NULL, &((POINT){ x, y }), &sz, mem, &src, 0, &bf, ULW_ALPHA);
+    SelectObject(mem, old);
+    DeleteDC(mem);
+    ReleaseDC(NULL, screen);
+}
+
+static void follow_reposition(void)
+{
+    if (!g_xhwnd || !g_bmp || !g_followKnown) return;
+    POINT cur;
+    GetCursorPos(&cur);
+    if (g_followKnown && cur.x == g_followCur.x && cur.y == g_followCur.y)
+        return;
+    RECT r;
+    if (!monitor_rect(g_cfg.monitor, &r)) return;
+    int E = g_followExt;
+    int wx = cur.x - E / 2, wy = cur.y - E / 2;
+    if (wx < r.left) wx = r.left;
+    if (wy < r.top) wy = r.top;
+    if (wx + E > r.right)  wx = r.right - E;
+    if (wy + E > r.bottom) wy = r.bottom - E;
+    if (wx < r.left) wx = r.left;
+    if (wy < r.top) wy = r.top;
+    g_followCur = cur;
+    composite_at(wx, wy, E, E);
+}
+
+static LRESULT CALLBACK XhWndProc(HWND h, UINT m, WPARAM w, LPARAM l)
+{
+    if (m == WM_TIMER) {
+        follow_reposition();
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
 static void ensure_window(void)
 {
     if (g_xhwnd) return;
@@ -241,6 +293,7 @@ static void ensure_window(void)
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = CX_XH_CLASS;
     if (!RegisterClassExW(&wc)) return;
+    wc.lpfnWndProc = XhWndProc;
     g_xhwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         CX_XH_CLASS, L"ChromaX Crosshair", WS_POPUP,
@@ -261,6 +314,8 @@ void Xh_Init(void)
     g_cfg.monitor = -1;
     g_cfg.color = RGB(255, 255, 255);
     g_cfg.ocolor = RGB(0, 0, 0);
+    g_cfg.oopacity = 100;
+    g_cfg.follow = 0;
 }
 
 void Xh_Update(const XhCfg *cfg)
@@ -270,6 +325,8 @@ void Xh_Update(const XhCfg *cfg)
     g_cfg.gap = clampi(g_cfg.gap, 0, 24);
     g_cfg.thick = clampi(g_cfg.thick, 1, 10);
     g_cfg.opacity = clampi(g_cfg.opacity, 0, 100);
+    g_cfg.oopacity = clampi(g_cfg.oopacity, 5, 100);
+    g_cfg.follow = g_cfg.follow ? 1 : 0;
     g_cfg.rotation = (g_cfg.rotation % 360 + 360) % 360;
     if (g_cfg.monitor >= MonCount()) g_cfg.monitor = -1;
 
@@ -285,26 +342,40 @@ void Xh_Update(const XhCfg *cfg)
     RECT r;
     if (!monitor_rect(g_cfg.monitor, &r)) return;
 
-    HBITMAP bmp = build_bitmap(r.right - r.left, r.bottom - r.top);
+    int bw, bh, wx, wy;
+    if (g_cfg.follow) {
+        int E = 2 * (g_cfg.size + g_cfg.gap) + g_cfg.thick * 2 + 12;
+        if (E > 256) E = 256;
+        g_followExt = E;
+        bw = bh = E;
+        POINT cur;
+        GetCursorPos(&cur);
+        wx = cur.x - E / 2;
+        wy = cur.y - E / 2;
+        if (wx < r.left) wx = r.left;
+        if (wy < r.top) wy = r.top;
+        if (wx + E > r.right)  wx = r.right - E;
+        if (wy + E > r.bottom) wy = r.bottom - E;
+        if (wx < r.left) wx = r.left;
+        if (wy < r.top) wy = r.top;
+        g_followCur.x = g_followCur.y = -1;
+        g_followKnown = 1;
+        SetTimer(g_xhwnd, 1, 33, NULL);
+    } else {
+        bw = r.right - r.left;
+        bh = r.bottom - r.top;
+        wx = r.left;
+        wy = r.top;
+        g_followKnown = 0;
+        KillTimer(g_xhwnd, 1);
+    }
+
+    HBITMAP bmp = build_bitmap(bw, bh);
     if (!bmp) return;
     if (g_bmp) DeleteObject(g_bmp);
     g_bmp = bmp;
 
-    MoveWindow(g_xhwnd, r.left, r.top, r.right - r.left, r.bottom - r.top, TRUE);
-    BLENDFUNCTION bf;
-    bf.BlendOp = AC_SRC_OVER;
-    bf.SourceConstantAlpha = 255;
-    bf.AlphaFormat = AC_SRC_ALPHA;
-    /* UpdateLayeredWindow composites from a source DC holding the DIB */
-    HDC screen = GetDC(NULL);
-    HDC mem = CreateCompatibleDC(screen);
-    HGDIOBJ old = SelectObject(mem, bmp);
-    SIZE sz = { r.right - r.left, r.bottom - r.top };
-    POINT src = { 0, 0 };
-    UpdateLayeredWindow(g_xhwnd, NULL, NULL, &sz, mem, &src, 0, &bf, ULW_ALPHA);
-    SelectObject(mem, old);
-    DeleteDC(mem);
-    ReleaseDC(NULL, screen);
+    composite_at(wx, wy, bw, bh);
     ShowWindow(g_xhwnd, SW_SHOWNOACTIVATE);
 }
 

@@ -753,8 +753,6 @@ static void draw_widget(HDC dc, Widget *p)
     }
 }
 
-static int g_colorMon;   /* defined below; used by slider_live_apply */
-
 static int can_focus(const Widget *p)
 {
     switch (p->type) {
@@ -1443,6 +1441,7 @@ static void build_color(void)
         W_DIM(-1, x + 496, y + 76, 604, 18,
               L"live \u2014 no fake curves: what you see is what the driver receives.", 0, 0);
         y += 250 + 14;
+    }
     }
 
     /* quick looks */

@@ -466,6 +466,8 @@ int Main_XhPresetSave(const wchar_t *name)
     CxJson_ObjSet(j, "ocolor", CxJson_NewNum(
         (GetRValue(g_xh.ocolor) << 16) | (GetGValue(g_xh.ocolor) << 8) |
         GetBValue(g_xh.ocolor)));
+    CxJson_ObjSet(j, "oopacity", CxJson_NewNum(g_xh.oopacity));
+    CxJson_ObjSet(j, "follow", CxJson_NewBool(g_xh.follow));
     char *str = CxJson_WriteStr(j);
     CxJson_Free(j);
     if (!str) return -1;
@@ -531,6 +533,8 @@ int Main_XhPresetLoad(int i, XhCfg *out)
     out->ocolor   = RGB((int)CxJson_GetNum(j, "ocolor", 0) >> 16 & 0xFF,
                         (int)CxJson_GetNum(j, "ocolor", 0) >> 8 & 0xFF,
                         (int)CxJson_GetNum(j, "ocolor", 0) & 0xFF);
+    out->oopacity = (int)CxJson_GetNum(j, "oopacity", 100);
+    out->follow   = CxJson_GetBool(j, "follow", 0);
     CxJson_Free(j);
     /* clamp to the UI ranges */
     if (out->shape < 0 || out->shape >= CXXH_NSHAPES) out->shape = 0;
@@ -671,6 +675,8 @@ void Main_Save(void)
     CxJson_ObjSet(xh, "ocolor", CxJson_NewNum(
         (GetRValue(g_xh.ocolor) << 16) | (GetGValue(g_xh.ocolor) << 8) |
         GetBValue(g_xh.ocolor)));
+    CxJson_ObjSet(xh, "oopacity", CxJson_NewNum(g_xh.oopacity));
+    CxJson_ObjSet(xh, "follow", CxJson_NewBool(g_xh.follow));
 
     CxJson *set = CxJson_NewObj();
     CxJson_ObjSet(set, "autoApply", CxJson_NewBool(g_settings.autoApply));
@@ -790,6 +796,8 @@ void Main_Load(void)
                         g_xh.ocolor = RGB((int)CxJson_GetNum(xh, "ocolor", 0) >> 16 & 0xFF,
                                           (int)CxJson_GetNum(xh, "ocolor", 0) >> 8 & 0xFF,
                                           (int)CxJson_GetNum(xh, "ocolor", 0) & 0xFF);
+                        g_xh.oopacity = (int)CxJson_GetNum(xh, "oopacity", 100);
+                        g_xh.follow = CxJson_GetBool(xh, "follow", 0);
                     }
                     CxJson *set = CxJson_Get(j, "settings");
                     if (set) {

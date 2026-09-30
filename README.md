@@ -46,6 +46,10 @@ Windows colour layer (`MagnificationSetDeviceColorMatrix`) and/or GPU gamma ramp
 - Vibrance 0–300 %, brightness, contrast
 - Gamma 0.5–2.5, temperature 3000–10000 K, tint, per-channel RGB correction
 - Shadows & highlights, black level, white point, sharpness, clarity
+- A visual per-monitor curve editor — drag shadow/gamma/highlight points on the exact
+  16-bit LUT that gets written to the display; the curve you see is the one the driver receives
+- Split-view before/after preview with a draggable divider, and direct numeric entry on any slider
+  (double-click the value)
 
 **Looks & presets** — 18 built-in looks (Competitive, Vibrant, Cinematic, Night,
 Snow, OLED, …), procedural preview scenes, and JSON presets you can import and export
@@ -69,8 +73,10 @@ toggle **only where the driver exposes it**, next to the SDR white level
 instead of showing a dead slider. No faked HDR state, ever.
 
 **Crosshair** — nine shapes (cross, dot, circle, square, plus, chevron, T, T-type,
-four-dot), size/gap/thickness/rotation, colours and outline, per-monitor placement,
-saved library. Rendered on a click-through layered window with 4× supersampling.
+four-dot), size/gap/thickness/rotation, colours, separate fill and outline opacity,
+per-monitor placement or cursor-following (dynamic) mode, built-in library plus
+unlimited user-saved crosshairs. Rendered on a click-through layered window — it is
+never injected into games.
 
 **Monitors** — every control targets the monitor you pick (or all of them). Displays
 are identified by hardware identity (EDID/monitor ID, resolved at runtime), not by

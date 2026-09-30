@@ -70,6 +70,8 @@ typedef struct XhCfg {
     int   monitor;   /* -1 = primary, else monitor index */
     COLORREF color;
     COLORREF ocolor;
+    int   oopacity;  /* outline opacity 5..100 */
+    int   follow;    /* 1 = overlay follows the cursor */
 } XhCfg;
 
 /* ------------------------------------------------------------------ */
