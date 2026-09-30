@@ -17,17 +17,17 @@
 
 Most gaming monitor tools fall into one of two traps: they are either rudimentary 1-slider utilities, or commercial software bloated with artificial paywalls, accounts, subscription prompts, and background telemetry.
 
-**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (306 KB) with near-zero idle CPU footprint:
+**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (347 KB) with near-zero idle CPU footprint:
 
 * **300% Saturation Engine** — Neutral 100% up to 300% application boost, combined with Rec.709-weighted smart vibrance that protects already saturated tones and skin tones.
-* **Direct Hardware GPU Gamma Ramps** — 16-bit lookup tables written via `SetDeviceGammaRamp` providing shadow toe lift, highlight shoulder compression, black level offset, and clarity/dehaze S-curves.
+* **Decoupled Display Pipeline** — Linear controls (saturation, vibrance, hue, temperature, tint, RGB gain, brightness, contrast, black level, white point) run through a 5×5 DWM color matrix, so dragging them never re-programs the GPU. Only the non-linear tone curves (gamma power curve, shadow toe lift, highlight shoulder compression, clarity/dehaze S-curve) are written as monotonic 16-bit lookup tables via `SetDeviceGammaRamp` — and only when a curve actually changes.
 * **20+ Per-Game Starting Profiles** — Rust, CS2, Fortnite, Valorant, Escape from Tarkov, PUBG, Apex Legends, Call of Duty / Warzone, Overwatch 2, Rainbow Six Siege, Minecraft, GTA V, DayZ, Helldivers 2, The Finals, and custom game executables.
 * **Stretched 4:3 & Refresh Rate Manager** — Instant switching to popular competitive stretched resolutions (`1280x960`, `1440x1080`, `1600x1200`), 16:10, and high-refresh modes (up to 500Hz+) with automatic rollback safety.
 * **Desktop Crosshair Overlay** — 4x supersampled layered overlay (`WS_EX_LAYERED | WS_EX_TRANSPARENT`). 8 shapes (Cross, Dot, Circle, Square, Plus, Chevron, T, T-Type), custom colors, and hotkey toggle (`Ctrl+Alt+X`).
 * **Multi-Monitor Management** — Target specific monitors independently (`DISPLAY1`, `DISPLAY2`) or synchronize across all displays. Includes a full-screen "Identify Displays" overlay.
 * **Event-Driven Foreground Automation** — Automatically detects when a game launches or receives focus, applies the assigned look, and restores your desktop profile upon exiting.
 * **LAN Phone Remote Control** — Control display colors and toggle presets from your smartphone on the same Wi-Fi network (`port 8777`). Protected with a random 4-digit pairing PIN.
-* **Monitor Test Patterns & Diagnostics** — Built-in test patterns for pure black (OLED/backlight bleed), pure white (uniformity), RGB subpixel inspection, 16-step gradients, and Gamma 2.2 calibration.
+* **Monitor Test Patterns & Diagnostics** — Built-in test patterns for pure black (OLED/backlight bleed), pure white (uniformity), RGB subpixel inspection, 16-step gradients, and Gamma 2.2 calibration. Every pattern auto-closes after 10 seconds, any key or click exits it, and a high-contrast countdown banner is shown on every monitor.
 * **Zero Telemetry & Local Storage** — No analytics, no phone-home, no accounts. All configurations are stored locally in plain INI/JSON.
 
 ---
@@ -73,8 +73,8 @@ It operates in the exact same legal space as the NVIDIA Control Panel, AMD Softw
 
 | Deliverable | Description | Size | SHA-256 Checksum |
 | :--- | :--- | :---: | :--- |
-| **`PlexusX.exe`** | Standalone Portable Executable | 317 KB | `70084c22a88456c3d8a51e7d675fbf49b26ec4468e25dbb3bedb311e2a6b577e` |
-| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 567 KB | `7c75c59e0c88a6fbd8ff6a68fd66951c3c6ba21170cf9ad97aac8c240485d148` |
+| **`PlexusX.exe`** | Standalone Portable Executable | 347 KB | `04f6f6cdb82410a9e25d800b31f8b7a8bb743a02c51de02a77540cfd892b04af` |
+| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 598 KB | `52b082ed72c6f654e263bc583a4d63c023ca014a74b78e3ce826ef26bf040547` |
 
 ### Verifying File Integrity
 
@@ -129,10 +129,32 @@ PlexusX includes carefully tuned, conservative starting points for popular compe
 | :--- | :--- |
 | `Ctrl + Alt + ↑` | Increase Saturation (+10%) |
 | `Ctrl + Alt + ↓` | Decrease Saturation (−10%) |
-| `Ctrl + Alt + 0` | Reset all colors to neutral (100%) |
+| `Ctrl + Alt + 0` | Reset **all** channels (R/G/B gain, black level, white point) and tone curves (gamma, shadows, highlights, clarity) to neutral |
 | `Ctrl + Alt + X` | Toggle Desktop Crosshair Overlay |
 | `Ctrl + Alt + E` | Toggle Color Engine On / Off |
 | `Ctrl + Alt + G` | Toggle Gaming Mode (ultra-low CPU) |
+| `Ctrl + Alt + Shift + R` | **Emergency Safe Reset** — closes every test pattern, bypasses the color engine and restores the display (`Eng_Reset()`) |
+
+---
+
+## 🛟 Safety Nets & Troubleshooting
+
+PlexusX changes global display state, so it ships with several independent ways back to a normal screen:
+
+| If… | Do this |
+| :--- | :--- |
+| The picture looks wrong, tinted or too dark | Press **`Ctrl + Alt + 0`**. It resets every channel and every tone curve to neutral. |
+| Anything is still wrong | Press **`Ctrl + Alt + Shift + R`** (Emergency Safe Reset). It closes all test patterns, **bypasses the color engine** and calls `Eng_Reset()`: identity color matrix plus your original gamma ramps. The same action is in the tray menu and on the **Tools** panel. |
+| A full-screen test pattern is showing | It closes by itself after **10 seconds**, and **any key or mouse click** dismisses it immediately. A high-contrast banner (`Display Test Pattern • Click or press ANY key to exit (Xs)`) at the bottom of every monitor shows the countdown. |
+| PlexusX crashed | The crash handler restores the display first, then writes a report to `%LocalAppData%\PlexusX\crash.log`. |
+| The PC lost power or PlexusX was killed while a curve was active | On the next start the dirty flag triggers a restore of the original gamma ramps saved in `ramps.dat`. The file is validated first (size, device names, monotonic, non-degenerate); a corrupted file is never applied and a clean linear ramp is used instead. |
+
+### How the display pipeline is split
+
+| Stage | API | Controls |
+| :--- | :--- | :--- |
+| **Linear** | Windows Magnification API — one 5×5 color matrix applied as `[R G B A 1] × M` (translation in row 4, homogeneous W′ column fixed to `[0 0 0 0 1]`, weights sanitized to `[-4, 4]`, NaN/Inf falls back to identity) | saturation, vibrance, hue (Rec.709, white and grays stay put at every angle), temperature, tint, RGB gain, brightness, contrast, black level, white point |
+| **Non-linear** | `SetDeviceGammaRamp` — monotonic (non-decreasing) 16-bit ramps; **not called** when gamma = 1.0, shadows = highlights = clarity = 100%, nor when the new ramp equals what is already programmed | gamma, shadows, highlights, clarity |
 
 ---
 
@@ -169,10 +191,16 @@ This compiles:
 * `site/download/PlexusX.exe` (Main standalone portable GUI executable)
 * `site/download/PlexusX-Setup.exe` (Standalone Windows installer)
 
+Both executables are **linked** as GUI programs (`-Wl,--subsystem,windows`), which selects the GUI C-runtime start-up (`WinMainCRTStartup`). Never flip the subsystem byte of a console-linked binary afterwards: the console start-up code would then run inside a GUI-flagged image and abort at launch. `make` ends with `tools/verify_pe.py`, which checks that both files are x64 images with **PE Subsystem 2 (Windows GUI)** and a GUI entry point.
+
 ### Running Automated Verification Tests
 ```bash
-gcc -std=c11 -Wall -O2 -o tests/test_runner tests/test_all.c -lm
+# colour math (the real app/src/color_math.h): 5x5 matrix, W' safety, hue, ramps, ramps.dat validation
+gcc -std=c11 -Wall -Werror -O2 -o tests/test_runner tests/test_all.c -lm
 ./tests/test_runner
+
+# engine.c itself against mocked Win32 display APIs (AddressSanitizer + UBSan)
+sh tests/host/run.sh
 ```
 
 ---
