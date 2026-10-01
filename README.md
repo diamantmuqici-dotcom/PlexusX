@@ -3,7 +3,7 @@
 [![Build Windows Executable](https://github.com/diamantmuqici-dotcom/PlexusX/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/diamantmuqici-dotcom/PlexusX/actions/workflows/build-windows-exe.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20x64-0078d4.svg)]()
-[![Version](https://img.shields.io/badge/Version-v2.0.0-c6ff3d.svg)]()
+[![Version](https://img.shields.io/badge/Version-v2.1.0-c6ff3d.svg)]()
 
 > **Your Display. Your Colors. Your Games.**  
 > A free, high-performance Windows gaming display and visual control center.  
@@ -17,15 +17,15 @@
 
 Most gaming monitor tools fall into one of two traps: they are either rudimentary 1-slider utilities, or commercial software bloated with artificial paywalls, accounts, subscription prompts, and background telemetry.
 
-**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (347 KB) with near-zero idle CPU footprint:
+**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (~367 KB) with near-zero idle CPU footprint:
 
-* **300% Saturation Engine** — Neutral 100% up to 300% application boost, combined with Rec.709-weighted smart vibrance that protects already saturated tones and skin tones.
+* **300% Saturation Engine** — Neutral 100% up to 300% Rec.709 chroma boost. Vibrance is a *bounded* extra boost (it no longer multiplies with saturation past the DWM weight limit). Neutrals stay neutral; the old independent-clamp path that painted high vibrance green is gone.
 * **Decoupled Display Pipeline** — Linear controls (saturation, vibrance, hue, temperature, tint, RGB gain, brightness, contrast, black level, white point) run through a 5×5 DWM color matrix, so dragging them never re-programs the GPU. Only the non-linear tone curves (gamma power curve, shadow toe lift, highlight shoulder compression, clarity/dehaze S-curve) are written as monotonic 16-bit lookup tables via `SetDeviceGammaRamp` — and only when a curve actually changes.
 * **20+ Per-Game Starting Profiles** — Rust, CS2, Fortnite, Valorant, Escape from Tarkov, PUBG, Apex Legends, Call of Duty / Warzone, Overwatch 2, Rainbow Six Siege, Minecraft, GTA V, DayZ, Helldivers 2, The Finals, and custom game executables.
 * **Stretched 4:3 & Refresh Rate Manager** — Instant switching to popular competitive stretched resolutions (`1280x960`, `1440x1080`, `1600x1200`), 16:10, and high-refresh modes (up to 500Hz+) with automatic rollback safety.
 * **Desktop Crosshair Overlay** — 4x supersampled layered overlay (`WS_EX_LAYERED | WS_EX_TRANSPARENT`). 8 shapes (Cross, Dot, Circle, Square, Plus, Chevron, T, T-Type), custom colors, and hotkey toggle (`Ctrl+Alt+X`).
 * **Multi-Monitor Management** — Target specific monitors independently (`DISPLAY1`, `DISPLAY2`) or synchronize across all displays. Includes a full-screen "Identify Displays" overlay.
-* **Event-Driven Foreground Automation** — Automatically detects when a game launches or receives focus, applies the assigned look, and restores your desktop profile upon exiting.
+* **Event-Driven Foreground Automation** — `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` plus `WM_ACTIVATEAPP`, `WM_DISPLAYCHANGE`, `WM_POWERBROADCAST` and session unlock. ALT+TAB reasserts the *requested* look; the GPU cache is never allowed to overwrite the sliders. Game detection does not `Sleep()` on the UI thread.
 * **LAN Phone Remote Control** — Control display colors and toggle presets from your smartphone on the same Wi-Fi network (`port 8777`). Protected with a random 4-digit pairing PIN.
 * **Monitor Test Patterns & Diagnostics** — Built-in test patterns for pure black (OLED/backlight bleed), pure white (uniformity), RGB subpixel inspection, 16-step gradients, and Gamma 2.2 calibration. Every pattern auto-closes after 10 seconds, any key or click exits it, and a high-contrast countdown banner is shown on every monitor.
 * **Zero Telemetry & Local Storage** — No analytics, no phone-home, no accounts. All configurations are stored locally in plain INI/JSON.
@@ -73,8 +73,8 @@ It operates in the exact same legal space as the NVIDIA Control Panel, AMD Softw
 
 | Deliverable | Description | Size | SHA-256 Checksum |
 | :--- | :--- | :---: | :--- |
-| **`PlexusX.exe`** | Standalone Portable Executable | 347 KB | `04f6f6cdb82410a9e25d800b31f8b7a8bb743a02c51de02a77540cfd892b04af` |
-| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 598 KB | `52b082ed72c6f654e263bc583a4d63c023ca014a74b78e3ce826ef26bf040547` |
+| **`PlexusX.exe`** | Standalone Portable Executable | 367 KB | `dec29688a2b8ed0a5449c7d499050e2fb8a0da3b5e3e7d7777309c780cba4820` |
+| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 617 KB | `6a2277a900c55c10b93be372625cff45d631650dc2f826a02de3eee7b39a964b` |
 
 ### Verifying File Integrity
 
@@ -153,7 +153,7 @@ PlexusX changes global display state, so it ships with several independent ways 
 
 | Stage | API | Controls |
 | :--- | :--- | :--- |
-| **Linear** | Windows Magnification API — one 5×5 color matrix applied as `[R G B A 1] × M` (translation in row 4, homogeneous W′ column fixed to `[0 0 0 0 1]`, weights sanitized to `[-4, 4]`, NaN/Inf falls back to identity) | saturation, vibrance, hue (Rec.709, white and grays stay put at every angle), temperature, tint, RGB gain, brightness, contrast, black level, white point |
+| **Linear** | Windows Magnification API — one 5×5 color matrix applied as `[R G B A 1] × M` (translation in row 4, homogeneous W′ column fixed to `[0 0 0 0 1]`, 3×3 colour block scaled *toward identity* to fit `[-4, 4]` so grays never go green, NaN/Inf falls back to identity) | saturation, vibrance, hue (Rec.709, white and grays stay put at every angle), temperature, tint, RGB gain, brightness, contrast, black level, white point |
 | **Non-linear** | `SetDeviceGammaRamp` — monotonic (non-decreasing) 16-bit ramps; **not called** when gamma = 1.0, shadows = highlights = clarity = 100%, nor when the new ramp equals what is already programmed | gamma, shadows, highlights, clarity |
 
 ---

@@ -11,6 +11,7 @@ what would have reached the hardware:
 * the matrix handed to `MagSetFullscreenColorEffect` (finite, in `[-4, 4]`, column 4 == `[0 0 0 0 1]`)
 * crash recovery from `ramps.dat` (valid, corrupted in seven ways, missing) and a crash *during* recovery
 * `Eng_Reset` (forced), `Eng_Resync`, monitor targeting, bypass, failing drivers, NaN/Inf looks
+* requested vs applied looks: `Eng_Invalidate` / `Eng_Reassert` must not clobber the user's sliders (ALT+TAB)
 
 ```sh
 sh tests/host/run.sh        # needs gcc or clang (CC=clang sh tests/host/run.sh) on Linux/macOS

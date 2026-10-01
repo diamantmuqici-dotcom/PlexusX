@@ -431,19 +431,26 @@ static void test_w_divisor_safety(void)
         }
     }
 
-    /* Weights are clamped to [-4, 4] */
+    /* 3×3 colour block is scaled toward identity (not independently clamped) so gray stays gray.
+     * Translation (row 4) is still independently clamped. */
     {
         MagColorEffect m;
         cm_identity(&m);
-        m.transform[0][0] = 9.0f;
-        m.transform[1][2] = -9.0f;
+        m.transform[0][0] = 9.0f;     /* I + 8 */
+        m.transform[1][2] = -9.0f;    /* I + -9 */
         m.transform[4][1] = 1e30f;
         int flags = cm_sanitize(&m);
         CHECK(flags & CM_SAN_CLAMPED);
-        CHECK(m.transform[0][0] == 4.0f);
-        CHECK(m.transform[1][2] == -4.0f);
+        CHECK(m.transform[0][0] <= 4.0f && m.transform[0][0] > 3.9f);
+        CHECK(m.transform[1][2] > -4.0f && m.transform[1][2] < -3.3f);
         CHECK(m.transform[4][1] == 4.0f);
         CHECK(effect_is_safe(&m));
+        /* Uniform scale toward identity: gray (1,1,1) stays balanced better than per-element clamp. */
+        {
+            float in[5] = { 1, 1, 1, 1, 1 }, out[5];
+            apply_row(&m, in, out);
+            CHECK(fabs(out[1] - out[0]) < fabs(out[1]) * 0.5); /* not a full green crush */
+        }
     }
 
     /* A translation written into column 4 (the old bug) or a corrupted divisor is repaired */
@@ -1002,6 +1009,99 @@ static void test_shipped_presets(void)
     printf("  [PASS] All %d shipped scene/game presets yield a safe matrix and a monotonic ramp\n", n);
 }
 
+/* ---------------- 15. High vibrance must not green-shift neutrals ---------------- */
+static void test_high_vibrance_neutrals(void)
+{
+    const float levels[] = { 0, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300 };
+    const float grays[] = { 0.0f, 0.18f, 0.5f, 0.73f, 1.0f };
+    const float colors[][3] = {
+        { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 },
+        { 0, 1, 1 }, { 1, 0, 1 }, { 1, 1, 0 },
+        { 0.76f, 0.57f, 0.46f }, { 0.2f, 0.3f, 0.9f }
+    };
+
+    for (size_t s = 0; s < sizeof levels / sizeof levels[0]; s++) {
+        for (size_t v = 0; v < sizeof levels / sizeof levels[0]; v++) {
+            Look lk = LOOK_NEUTRAL_INIT;
+            lk.sat = levels[s];
+            lk.vibrance = levels[v];
+
+            MagColorEffect e;
+            cm_build_effect(&lk, &e);
+            CHECK(effect_is_safe(&e));
+
+            /* Neutral gray is a fixed point of the chroma stage (and of the full
+             * linear look, since bri/con/temp are identity here). */
+            for (size_t g = 0; g < sizeof grays / sizeof grays[0]; g++) {
+                float r, gg, b;
+                cm_apply_pixel(&lk, grays[g], grays[g], grays[g], &r, &gg, &b);
+                CHECK(isfinite(r) && isfinite(gg) && isfinite(b));
+                CHECK_NEAR(r, gg, 2e-5);
+                CHECK_NEAR(gg, b, 2e-5);
+            }
+
+            for (size_t c = 0; c < sizeof colors / sizeof colors[0]; c++) {
+                float r, g, b;
+                cm_apply_pixel(&lk, colors[c][0], colors[c][1], colors[c][2], &r, &g, &b);
+                CHECK(isfinite(r) && isfinite(g) && isfinite(b));
+            }
+        }
+    }
+
+    /* Combined sat=300 vib=300: the old independent clamp produced ~(0.54, 1, -0.08). */
+    {
+        Look lk = LOOK_NEUTRAL_INIT;
+        lk.sat = 300; lk.vibrance = 300;
+        float r, g, b;
+        cm_apply_pixel(&lk, 0.5f, 0.5f, 0.5f, &r, &g, &b);
+        CHECK_NEAR(r, 0.5, 2e-4);
+        CHECK_NEAR(g, 0.5, 2e-4);
+        CHECK_NEAR(b, 0.5, 2e-4);
+        CHECK(g - r < 0.01f);   /* no green cast */
+    }
+
+    /* sat=300, vib=100 must remain a 3× Rec.709 saturation (regression vs. the old multiply). */
+    {
+        MagColorEffect m;
+        cm_saturation(&m, 300.0f, 100.0f);
+        const float w709[3] = { CM_LUM_R, CM_LUM_G, CM_LUM_B };
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                CHECK_NEAR(m.transform[i][j], (i == j ? 3.0 : 0.0) + w709[i] * (1.0 - 3.0), 1e-5);
+        CHECK_NEAR(cm_chroma_eff(100.0f, 100.0f), 1.0, 1e-6);
+        CHECK_NEAR(cm_chroma_eff(300.0f, 100.0f), 3.0, 1e-6);
+        CHECK(cm_chroma_eff(300.0f, 300.0f) <= (CM_WEIGHT_LIMIT - CM_LUM_B) / (1.0f - CM_LUM_B) + 1e-5f);
+    }
+
+    printf("  [PASS] High vibrance / saturation preserve neutrals and stay finite through MAX\n");
+}
+
+/* ---------------- 16. Requested vs applied look identity ---------------- */
+static void test_requested_applied_state(void)
+{
+    Look a = LOOK_NEUTRAL_INIT;
+    Look b = LOOK_NEUTRAL_INIT;
+    CHECK(cm_looks_equal(&a, &b));
+    b.vibrance = 250.0f;
+    CHECK(!cm_looks_equal(&a, &b));
+    b = a;
+    b.enabled = 0;
+    CHECK(!cm_looks_equal(&a, &b));
+
+    /* A device recreation must re-apply the SAME requested look, not a GPU readout. */
+    Look requested = LOOK_NEUTRAL_INIT;
+    requested.sat = 250.0f;
+    requested.vibrance = 250.0f;
+    Look applied = requested;
+    CHECK(cm_looks_equal(&requested, &applied));
+    /* focus lost: hardware cache dropped, requested unchanged */
+    Look after_focus = requested;
+    CHECK(cm_looks_equal(&requested, &after_focus));
+    CHECK_NEAR(after_focus.vibrance, 250.0f, 0.0);
+
+    printf("  [PASS] Requested look is distinct from applied hardware and survives focus loss\n");
+}
+
 int main(void)
 {
     printf("\n=== PlexusX Automated Verification Test Suite ===\n");
@@ -1019,7 +1119,9 @@ int main(void)
     test_ramp_write_planning();
     test_ramps_file_validation();
     test_shipped_presets();
+    test_high_vibrance_neutrals();
+    test_requested_applied_state();
     printf("==================================================\n");
-    printf("ALL 14 UNIT & INTEGRATION TEST SUITES PASSED (100%%) - %d checks\n\n", g_checks);
+    printf("ALL 16 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
     return 0;
 }

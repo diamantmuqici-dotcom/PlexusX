@@ -45,6 +45,11 @@ static int     g_ndisp = 0;
 static int     g_target_disp = -1; /* -1 = all displays */
 static int     g_eng_ready = 0;
 
+static Look    g_requested = LOOK_NEUTRAL_INIT;
+static Look    g_applied   = LOOK_NEUTRAL_INIT;
+static int     g_applied_ok = 0;
+static const wchar_t *g_invalidate_why = L"startup";
+
 static GpuInfo g_gpu_info;
 
 static wchar_t g_ramps_path[MAX_PATH];
@@ -394,24 +399,49 @@ void Eng_Resync(void)
     for (int d = 0; d < g_ndisp; d++) g_disp[d].have_curr = 0;
 }
 
+/* Forget cached GPU/DWM state.  The user's requested look is never overwritten:
+ * a focus loss, exclusive-fullscreen game, or device reset only invalidates
+ * *applied* hardware, which Eng_Reassert() / Eng_Apply() then restores. */
+void Eng_Invalidate(const wchar_t *reason)
+{
+    if (reason && reason[0]) g_invalidate_why = reason;
+    Eng_Resync();
+}
+
+void Eng_Reassert(void)
+{
+    if (!g_eng_ready) return;
+    Eng_Apply(&g_requested);
+}
+
+const Look *Eng_GetRequested(void) { return &g_requested; }
+const Look *Eng_GetApplied(void)   { return g_applied_ok ? &g_applied : NULL; }
+int Eng_RequestedMatchesApplied(void)
+{
+    return g_applied_ok && cm_looks_equal(&g_requested, &g_applied);
+}
+const wchar_t *Eng_LastInvalidateReason(void) { return g_invalidate_why; }
+
 /* Linear half of the look -> DWM.  The effect is sanitised (NaN/Inf -> identity,
  * weights clamped to [-4, 4], column 4 == [0,0,0,0,1]) inside cm_build_effect(),
  * and nothing is sent when it equals what DWM already has. */
-static void apply_matrix(const Look *lk)
+static int apply_matrix(const Look *lk)
 {
-    if (!g_mag_ok) return;
+    if (!g_mag_ok) return 1;          /* no DWM path: treat as success so ramps can still run */
 
     MagColorEffect fx;
     cm_build_effect(lk, &fx);
-    cm_sanitize(&fx);                 /* last gate before DWM: NaN/Inf -> identity, weights in [-4, 4], W' column [0,0,0,0,1] */
+    cm_sanitize(&fx);                 /* last gate before DWM: NaN/Inf -> identity, 3x3 scaled toward identity, W' column [0,0,0,0,1] */
 
-    if (g_fx_known && memcmp(&g_fx_curr, &fx, sizeof fx) == 0) return;
+    if (g_fx_known && memcmp(&g_fx_curr, &fx, sizeof fx) == 0) return 1;
 
     MagColorEffect tmp = fx;          /* the API takes a non-const pointer */
     if (p_MagSetFx(&tmp)) {
         g_fx_curr = fx;
         g_fx_known = 1;
+        return 1;
     }
+    return 0;
 }
 
 /* Non-linear half of the look -> GPU ramps, one display at a time.
@@ -420,11 +450,12 @@ static void apply_matrix(const Look *lk)
  *     (the original ramp is restored once if we had changed it)
  *   - computed ramp == curr: no call, so dragging colour sliders never makes the
  *     driver re-sync the display pipeline. */
-static void apply_ramps(const Look *lk)
+static int apply_ramps(const Look *lk)
 {
-    if (!g_ndisp) return;
+    if (!g_ndisp) return 1;
 
     static const Look neutral = LOOK_NEUTRAL_INIT;
+    int ok = 1;
 
     for (int d = 0; d < g_ndisp; d++) {
         DispDC *dd = &g_disp[d];
@@ -438,30 +469,40 @@ static void apply_ramps(const Look *lk)
 
         /* About to leave the original ramp: crash recovery has to know */
         if (memcmp(want, dd->orig, sizeof want) != 0) mark_dirty();
-        write_ramp(dd, want);
+        if (!write_ramp(dd, want)) ok = 0;
     }
 
     /* Every display is back on its original ramp: nothing is left for crash recovery to undo */
     for (int d = 0; d < g_ndisp; d++) {
-        if (g_disp[d].have_orig && memcmp(g_disp[d].curr, g_disp[d].orig, sizeof g_disp[d].curr) != 0) return;
+        if (g_disp[d].have_orig && memcmp(g_disp[d].curr, g_disp[d].orig, sizeof g_disp[d].curr) != 0) return ok;
     }
     clear_dirty();
+    return ok;
 }
 
 void Eng_Apply(const Look *lk)
 {
-    if (!g_eng_ready || !lk) return;
+    if (!g_eng_ready) return;
+    if (lk) {
+        g_requested = *lk;
+        cm_sanitize_look(&g_requested);
+    }
 
-    Look safe = *lk;
-    cm_sanitize_look(&safe);
+    Look safe = g_requested;
 
     if (!safe.enabled) {
         reset_all(0);          /* bypassed: neutral display, only undo what we changed */
+        g_applied = safe;
+        g_applied_ok = 1;
         return;
     }
 
-    apply_matrix(&safe);
-    apply_ramps(&safe);
+    int mok = apply_matrix(&safe);
+    int rok = apply_ramps(&safe);
+    if (mok && rok) {
+        g_applied = safe;
+        g_applied_ok = 1;
+    }
 }
 
 /* Forced, unconditional restore: identity colour matrix + original gamma ramps.

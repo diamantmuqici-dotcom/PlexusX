@@ -101,7 +101,10 @@ static inline int cm_effect_is_identity(const MagColorEffect *e)
 
 /* Final safety net, applied right before MagSetFullscreenColorEffect():
  *   - any NaN/Inf anywhere           -> the whole matrix becomes the identity
- *   - weights clamped to [-4, 4]
+ *   - the 3×3 colour block is scaled TOWARD IDENTITY until every weight fits
+ *     in [-4, 4].  Independent per-element clamping is forbidden: it breaks
+ *     Rec.709 column sums and turns gray green (the high-vibrance bug).
+ *   - translation (row 4) is clamped independently
  *   - structure enforced: column 4 == [0 0 0 0 1], alpha passes straight through
  * Returns a bit mask of CM_SAN_* describing what had to be fixed. */
 static inline int cm_sanitize(MagColorEffect *e)
@@ -117,8 +120,48 @@ static inline int cm_sanitize(MagColorEffect *e)
         }
     }
 
+    /* Fit the 3×3 colour block: M' = I + k (M - I), k in [0, 1], so that
+     * every entry stays in [-4, 4].  If M preserved gray, so does M'.
+     * A 0.25% margin absorbs floating-point rounding so the public
+     * ±4 contract is never missed by an ulp. */
+    {
+        const float lim = CM_WEIGHT_LIMIT * 0.9975f;
+        float k = 1.0f;
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                float id = (r == c) ? 1.0f : 0.0f;
+                float d  = e->transform[r][c] - id;
+                if (d == 0.0f) continue;
+                float hi = (d > 0.0f) ? ( lim - id) / d
+                                      : (-lim - id) / d;
+                if (hi < k) k = hi;
+            }
+        }
+        if (k < 1.0f) {
+            if (k < 0.0f) k = 0.0f;
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 3; c++) {
+                    float id = (r == c) ? 1.0f : 0.0f;
+                    e->transform[r][c] = id + k * (e->transform[r][c] - id);
+                }
+            }
+            flags |= CM_SAN_CLAMPED;
+        }
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                float v = e->transform[r][c];
+                if (v < -CM_WEIGHT_LIMIT || v > CM_WEIGHT_LIMIT) {
+                    e->transform[r][c] = cm_clampf(v, -CM_WEIGHT_LIMIT, CM_WEIGHT_LIMIT);
+                    flags |= CM_SAN_CLAMPED;
+                }
+            }
+        }
+    }
+
+    /* Translation and any leftover weights: independent clamp is safe here. */
     for (int r = 0; r < 5; r++) {
         for (int c = 0; c < 5; c++) {
+            if (r < 3 && c < 3) continue;
             float v = e->transform[r][c];
             if (v < -CM_WEIGHT_LIMIT || v > CM_WEIGHT_LIMIT) {
                 e->transform[r][c] = cm_clampf(v, -CM_WEIGHT_LIMIT, CM_WEIGHT_LIMIT);
@@ -142,12 +185,38 @@ static inline int cm_sanitize(MagColorEffect *e)
 
 /* ===================== Individual linear colour stages ===================== */
 
+/* Combined chroma scale for saturation + vibrance.
+ *
+ * Older builds multiplied the two sliders (`sat/100 * (0.6 + 0.4*vib/100)`),
+ * which at 300%/300% produced eff = 5.4.  Independently clamping those
+ * coefficients to [-4, 4] then broke the Rec.709 column sums, so neutral
+ * gray mapped to ~(0.54, 1.00, -0.08) — the high-vibrance green cast.
+ *
+ * New combine (neutral at 100/100, sat=300 vib=100 still exactly 3×):
+ *   extra = 0.5 * (vib/100 - 1)                 // [-0.5, +1.0]
+ *   eff   = (sat/100) * (1 + 0.40 * extra)      // 300/300 → 4.20
+ * then fitted so every Rec.709 saturation coefficient stays in [-4, 4]:
+ *   M_bb = lb + eff*(1-lb) <= 4  →  eff <= (4-lb)/(1-lb) ≈ 4.234
+ */
+static inline float cm_chroma_eff(float sat_pct, float vib_pct)
+{
+    float s = sat_pct / 100.0f;
+    float extra = 0.5f * (vib_pct / 100.0f - 1.0f);
+    float eff = s * (1.0f + 0.40f * extra);
+
+    const float max_eff = (CM_WEIGHT_LIMIT - CM_LUM_B) / (1.0f - CM_LUM_B);
+    const float min_eff = 1.0f - CM_WEIGHT_LIMIT / CM_LUM_G;
+    if (eff > max_eff) eff = max_eff;
+    if (eff < min_eff) eff = min_eff;
+    if (fabsf(eff - 1.0f) < 1e-6f) eff = 1.0f;
+    return eff;
+}
+
 /* Saturation / vibrance: luminance-preserving (Rec.709), grays are fixed points */
 static inline void cm_saturation(MagColorEffect *o, float sat_pct, float vib_pct)
 {
     const float w[3] = { CM_LUM_R, CM_LUM_G, CM_LUM_B };
-    float eff = (sat_pct / 100.0f) * (0.6f + 0.4f * (vib_pct / 100.0f));
-    if (fabsf(eff - 1.0f) < 1e-6f) eff = 1.0f;   /* exact identity when neutral */
+    const float eff = cm_chroma_eff(sat_pct, vib_pct);
 
     cm_identity(o);
     /* Row-vector form: out_j = eff * in_j + (1 - eff) * Y,  Y = sum_i w_i * in_i */
@@ -327,6 +396,32 @@ static inline void cm_build_effect(const Look *in, MagColorEffect *out)
     *out = m;
 }
 
+static inline int cm_looks_equal(const Look *a, const Look *b)
+{
+    if (!a || !b) return 0;
+    return a->enabled == b->enabled &&
+           a->sat == b->sat && a->vibrance == b->vibrance &&
+           a->bri == b->bri && a->con == b->con &&
+           a->gamma == b->gamma && a->temp == b->temp && a->tint == b->tint &&
+           a->r_gain == b->r_gain && a->g_gain == b->g_gain && a->b_gain == b->b_gain &&
+           a->shadows == b->shadows && a->highlights == b->highlights &&
+           a->black_level == b->black_level && a->white_point == b->white_point &&
+           a->clarity == b->clarity && a->hue == b->hue;
+}
+
+static inline void cm_xform_rgb(const MagColorEffect *m, float r, float g, float b,
+                                float *or_, float *og_, float *ob_)
+{
+    const float in[5] = { r, g, b, 1.0f, 1.0f };
+    float o0 = 0.0f, o1 = 0.0f, o2 = 0.0f;
+    for (int i = 0; i < 5; i++) {
+        o0 += in[i] * m->transform[i][0];
+        o1 += in[i] * m->transform[i][1];
+        o2 += in[i] * m->transform[i][2];
+    }
+    *or_ = o0; *og_ = o1; *ob_ = o2;
+}
+
 /* ======================= Non-linear GPU gamma ramp ========================= */
 
 #define CM_RAMP_BYTES      (3 * 256 * sizeof(unsigned short))
@@ -447,6 +542,41 @@ static inline int cm_ramp_plan(unsigned short orig[3][256], unsigned short curr[
     cm_calc_ramp(&lk, want);
     if (have_curr && memcmp(curr, want, CM_RAMP_BYTES) == 0) return 0;
     return 1;
+}
+
+static inline float cm_ramp_sample(const unsigned short ch[256], float x)
+{
+    x = cm_clampf(x, 0.0f, 1.0f);
+    float f = x * 255.0f;
+    int i0 = (int)f;
+    if (i0 < 0) i0 = 0;
+    if (i0 > 255) i0 = 255;
+    int i1 = (i0 < 255) ? i0 + 1 : 255;
+    float t = f - (float)i0;
+    float a = ch[i0] / 65535.0f;
+    float b = ch[i1] / 65535.0f;
+    return a + t * (b - a);
+}
+
+/* Same math the DWM matrix + GPU ramp apply to a pixel.  Live preview uses this. */
+static inline void cm_apply_pixel(const Look *in, float r, float g, float b,
+                                  float *or_, float *og_, float *ob_)
+{
+    Look lk = *in;
+    cm_sanitize_look(&lk);
+    if (!lk.enabled) {
+        *or_ = r; *og_ = g; *ob_ = b;
+        return;
+    }
+    MagColorEffect e;
+    cm_build_effect(&lk, &e);
+    float rr, gg, bb;
+    cm_xform_rgb(&e, r, g, b, &rr, &gg, &bb);
+    unsigned short ramp[3][256];
+    cm_calc_ramp(&lk, ramp);
+    *or_ = cm_ramp_sample(ramp[0], rr);
+    *og_ = cm_ramp_sample(ramp[1], gg);
+    *ob_ = cm_ramp_sample(ramp[2], bb);
 }
 
 /* ====================== ramps.dat (crash-recovery file) ==================== */

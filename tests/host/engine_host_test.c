@@ -268,6 +268,24 @@ int main(int argc, char **argv)
     CHECK(exists(g_dirty_c));
     rm(g_dirty_c);
 
+    /* ---- S15: requested look survives a pipeline invalidation (ALT+TAB / Eng_Resync) ---- */
+    scen("S15 requested vs applied: Resync must not overwrite the user's look");
+    reset_world(2); start(0);
+    lk = neutral(); lk.sat = 250; lk.vibrance = 250; lk.enabled = 1;
+    Eng_Apply(&lk);
+    CHECK(Eng_GetRequested() != NULL);
+    CHECK(Eng_GetRequested()->sat == 250.f && Eng_GetRequested()->vibrance == 250.f);
+    CHECK(Eng_GetApplied() != NULL && Eng_RequestedMatchesApplied());
+    int mag_before_resync = g_mock_mag_calls;
+    Eng_Invalidate(L"alt-tab");
+    CHECK(Eng_GetRequested()->sat == 250.f);                 /* requested never clobbered */
+    CHECK(Eng_GetRequested()->vibrance == 250.f);
+    Eng_Reassert();
+    CHECK(g_mock_mag_calls == mag_before_resync + 1);        /* DWM re-fed the same matrix */
+    CHECK(Eng_GetApplied() && Eng_GetApplied()->vibrance == 250.f);
+    CHECK(Eng_RequestedMatchesApplied());
+    Eng_Shutdown();
+
     printf("ENGINE HOST SCENARIOS PASSED: %d scenarios, %d checks\n", g_scen, g_checks);
     return 0;
 }

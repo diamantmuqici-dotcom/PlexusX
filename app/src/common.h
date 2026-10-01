@@ -25,8 +25,8 @@
 
 #define PX_APP_NAME       L"PlexusX"
 #define PX_APP_TITLE      L"PlexusX — Gaming Display Optimizer"
-#define PX_VERSION        L"2.0.0"
-#define PX_BUILD_DATE     L"2026-09-30"
+#define PX_VERSION        L"2.1.0"
+#define PX_BUILD_DATE     L"2026-10-01"
 #define PX_CLASS          L"PlexusXMainWnd"
 #define PX_XH_CLASS       L"PlexusXCrosshairWnd"
 #define PX_TEST_CLASS     L"PlexusXTestPatternWnd"
@@ -41,6 +41,8 @@
 #define WM_APP_LOOK       (WM_APP + 1)   /* remote / phone -> app look */
 #define WM_APP_TRAY       (WM_APP + 2)   /* tray icon callback */
 #define WM_APP_TOAST      (WM_APP + 3)   /* notification toast */
+#define WM_APP_FOREGROUND (WM_APP + 4)   /* EVENT_SYSTEM_FOREGROUND posted to UI thread */
+#define WM_APP_PIPELINE   (WM_APP + 5)   /* reassert requested look after a display event */
 
 /* ---------------- Color Engine Parameters ---------------- */
 /* The Look struct lives in look.h (Windows-free) so the colour math can be unit-tested. */
@@ -234,6 +236,7 @@ enum {
     ID_T_GAMING_MODE,
     ID_T_AUTO_RESTORE,
     ID_T_REDUCE_MOTION,
+    ID_T_GLASS,
 
     /* Buttons - Actions */
     ID_B_RESET_COLOR = 400,
@@ -281,6 +284,16 @@ enum {
 
     /* Safety */
     ID_B_EMERGENCY_RESET,
+    ID_B_RESET_GAME,
+    ID_B_RESET_EFFECT,
+
+    /* Appearance */
+    ID_B_BG_NONE,
+    ID_B_BG_ABSTRACT,
+    ID_B_BG_IMAGE,
+    ID_B_ANIM_OFF,
+    ID_B_ANIM_REDUCED,
+    ID_B_ANIM_ON,
 
     /* Crosshair Shapes */
     ID_XH_SHAPE_BASE = 450,
@@ -355,6 +368,12 @@ void        Eng_SetPaths(const wchar_t *ramps, const wchar_t *dirty, int was_dir
 void        Eng_Apply(const Look *lk);
 void        Eng_Reset(void);       /* forced: identity matrix + original gamma ramps (crash / emergency safe) */
 void        Eng_Resync(void);      /* forget cached hardware state so the next Eng_Apply() re-asserts it */
+void        Eng_Invalidate(const wchar_t *reason); /* Resync + remember why; does NOT touch requested look */
+void        Eng_Reassert(void);    /* apply the stored requested look after a pipeline invalidation */
+const Look *Eng_GetRequested(void);
+const Look *Eng_GetApplied(void);
+int         Eng_RequestedMatchesApplied(void);
+const wchar_t *Eng_LastInvalidateReason(void);
 int         Eng_Available(void);
 void        Eng_SetTargetMonitor(int idx); /* -1 = all, 0.. = specific display */
 int         Eng_GetTargetMonitor(void);
@@ -373,7 +392,8 @@ int         Prof_ActiveIndex(void);
 void        Prof_SetActiveIndex(int i);
 int         Prof_SelectSubMode(int game_idx, int sub_idx);
 int         Prof_FindExe(const wchar_t *exe);
-void        Prof_Poll(void);
+int         Prof_Poll(void);        /* 1 if the active look changed (game in/out) */
+void        Prof_TickPending(void); /* fire a delayed profile apply without sleeping the UI thread */
 void        Prof_SetDetect(int on);
 int         Prof_Detect(void);
 int         Prof_AddCustom(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk);
@@ -446,6 +466,8 @@ int         Ui_MouseMove(int x, int y, int dragging);
 void        Ui_MouseUp(int x, int y);
 int         Ui_Hover(int x, int y);
 int         Ui_Wheel(int x, int y, int delta);
+int         Ui_Key(int vk, int ctrl, int shift);
+int         Ui_DoubleClick(int x, int y);
 void        Ui_SetPanel(int side_id);
 int         Ui_Panel(void);
 Look       *Ui_Look(void);
@@ -459,10 +481,19 @@ int         Ui_CapHit(int x, int y);
 int         Ui_InTop(int x, int y);
 void        Ui_FilterGames(const wchar_t *filter);
 const wchar_t *Ui_GetFilter(void);
+int         Ui_GlassEnabled(void);
+int         Ui_BgMode(void);          /* 0 none, 1 abstract, 2 image */
+int         Ui_ReduceMotion(void);
+int         Ui_AnimLevel(void);       /* 0 off, 1 reduced, 2 on */
+int         Ui_StartupEnabled(void);
+void        Ui_SetStartupEnabled(int on);
+void        Ui_LoadAppearance(int glass, int bg, int reduce, int anim, int startup);
 
 /* Main Application Helpers (main.c) */
 void        Main_ApplyAll(void);
 void        Main_Save(void);
+void        Main_ApplyChrome(void);
+void        Main_SetStartup(int on);
 void        Main_EmergencyReset(void);   /* Ctrl+Alt+Shift+R: close patterns, bypass engine, Eng_Reset() */
 const wchar_t *Main_GetExePath(void);
 const wchar_t *Main_GetAppDataPath(void);
