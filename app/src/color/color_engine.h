@@ -31,6 +31,7 @@
 #include "../color/color_state.h"
 #include "../color/applied_color_state.h"
 #include "../color/color_pipeline.h"
+#include "../color/color_runtime_state.h"
 #include "../diagnostics/diagnostics.h"
 
 /* lifecycle (owned by main.c) */
@@ -45,6 +46,16 @@ void              Eng_SetMode(PxColorMode mode, int game_idx, int sub_idx);
 const Look       *Eng_GetRequested(void);
 void              Eng_Apply(const Look *lk);         /* legacy entry: set + apply */
 void              Eng_ApplyNow(void);                /* apply current ColorState  */
+
+/* requested → effective → applied (color_runtime_state.h)
+ *
+ * Eng_Effective() gathers the live output facts (magnification path, ramp
+ * displays, HDR, presentation mode of the foreground window, pending edits) and
+ * derives the EFFECTIVE look + the one honest PxColorStatus.  It is the single
+ * source every status surface reads: UI chips, tray tooltip, diagnostics, phone. */
+const PxEffectiveState *Eng_Effective(void);
+PxOutputFacts           Eng_OutputFacts(void);
+void                    Eng_SetApplyPending(int pending);  /* UI drag: an apply is in flight */
 
 /* applied / hardware truth */
 const Look           *Eng_GetApplied(void);         /* NULL until first full apply */

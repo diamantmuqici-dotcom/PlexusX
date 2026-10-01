@@ -62,6 +62,7 @@
 #define WM_APP_TRAY       (WM_APP + 2)   /* tray icon callback */
 #define WM_APP_TOAST      (WM_APP + 3)   /* notification toast */
 #define WM_APP_FOREGROUND (WM_APP + 4)   /* EVENT_SYSTEM_FOREGROUND posted to UI thread */
+#define WM_APP_PROFILE    (WM_APP + 5)   /* phone/remote -> activate game profile (wParam = index) */
 
 /* ---------------- Color Engine Parameters ---------------- */
 /* The Look struct lives in color/look.h (Windows-free) so the colour math can
@@ -78,32 +79,11 @@
 #include "games/game_state.h"
 #include "games/game_display_state.h"
 
-/* ---------------- Per-Game Profile Structure ---------------- */
-#define MAX_SUB_MODES 12
-
-typedef struct SubMode {
-    wchar_t name[32];      /* e.g. "Competitive", "Forest", "Night" */
-    Look    look;
-} SubMode;
-
-typedef struct Profile {
-    wchar_t name[48];      /* e.g. "Rust", "CS2", "Fortnite" */
-    wchar_t exe[96];       /* e.g. "RustClient.exe" */
-    wchar_t tag[32];       /* e.g. "Survival FPS", "Tactical Shooter" */
-    int     is_custom;     /* 1 = user created custom game */
-    int     favorite;      /* 1 = favorite game */
-    int     sub_count;     /* number of sub-modes */
-    int     active_sub;    /* currently selected sub-mode */
-    SubMode sub[MAX_SUB_MODES];
-    /* Per-game display preference */
-    int     target_res_w;  /* 0 = default / don't change */
-    int     target_res_h;
-    int     target_hz;
-    int     hdr_preference;/* 0 = keep, 1 = SDR, 2 = HDR */
-    int     auto_apply;    /* 1 = apply on launch */
-    int     auto_restore;  /* 1 = restore previous when game exits */
-    int     delay_ms;      /* 0..3000 delay before applying profile */
-} Profile;
+/* ---------------- Per-Game Profile Model ----------------
+ * The Profile / SubMode model now lives in games/game_profile.h (pure, host
+ * tested): one place for the fields, the exe-alias matching, duplication and
+ * the versioned JSON import/export. */
+#include "games/game_profile.h"
 
 /* ---------------- Preset / Look Definition ---------------- */
 typedef struct SceneDef {
@@ -147,20 +127,34 @@ typedef struct XhPreset {
     XhCfg cfg;
 } XhPreset;
 
-/* ---------------- UI Navigation Tabs ---------------- */
+/* ---------------- UI Navigation (grouped sidebar) ----------------
+ * The sidebar is the product map itself:
+ *
+ *   PLEXUSX
+ *   HOME
+ *   DISPLAY   Global Color · Monitors · Resolution · Refresh Rate
+ *   GAMES     Game Profiles · Active Game · Custom Games
+ *   TOOLS     Crosshair · Test Patterns · Diagnostics
+ *   REMOTE    Phone Control
+ *   SETTINGS
+ *
+ * One page per entry; every page reads live state from its owner. */
 enum {
     ID_SIDE_BASE = 100,
     ID_SIDE_HOME = 100,
-    ID_SIDE_GAMES,
-    ID_SIDE_DISPLAY,
-    ID_SIDE_COLOR,
-    ID_SIDE_PRESETS,
-    ID_SIDE_CROSS,
-    ID_SIDE_MONITORS,
-    ID_SIDE_AUTOMATION,
-    ID_SIDE_TOOLS,
-    ID_SIDE_SETTINGS,
-    ID_SIDE_COUNT = 10
+    ID_SIDE_COLOR,          /* DISPLAY ▸ Global Color   */
+    ID_SIDE_MONITORS,       /* DISPLAY ▸ Monitors       */
+    ID_SIDE_RESOLUTION,     /* DISPLAY ▸ Resolution     */
+    ID_SIDE_RATE,           /* DISPLAY ▸ Refresh Rate   */
+    ID_SIDE_GAMES,          /* GAMES   ▸ Game Profiles  */
+    ID_SIDE_ACTIVE_GAME,    /* GAMES   ▸ Active Game    */
+    ID_SIDE_CUSTOM_GAMES,   /* GAMES   ▸ Custom Games   */
+    ID_SIDE_CROSS,          /* TOOLS   ▸ Crosshair      */
+    ID_SIDE_PATTERNS,       /* TOOLS   ▸ Test Patterns  */
+    ID_SIDE_DIAG,           /* TOOLS   ▸ Diagnostics    */
+    ID_SIDE_PHONE,          /* REMOTE  ▸ Phone Control  */
+    ID_SIDE_SETTINGS,       /* SETTINGS                 */
+    ID_SIDE_COUNT = 14
 };
 
 /* ---------------- Widget Identifiers ---------------- */
@@ -281,6 +275,7 @@ enum {
     /* Safety */
     ID_B_EMERGENCY_RESET,
     ID_B_RESET_GAME,
+    ID_B_XH_TOGGLE_REMOTE,   /* posted from the phone thread: toggles the overlay on the UI thread */
     ID_B_RESET_EFFECT,
 
     /* Appearance */
@@ -313,7 +308,92 @@ enum {
     ID_TEST_PAT_BASE  = 860,     /* 860..875 */
 
     /* Monitors Selection */
-    ID_MONITOR_CARD_BASE = 880   /* 880..890 */
+    ID_MONITOR_CARD_BASE = 880,  /* 880..890 */
+
+    /* ------------------------------------------------------------------
+     * Module ids for the production UI pass (900+ keeps every existing id
+     * stable so saved config, hotkeys and the phone remote keep working). */
+    ID_B_ENGINE_ON = 900,
+    ID_B_ENGINE_OFF,
+    ID_B_OPEN_COLOR,
+    ID_B_OPEN_GAME,
+    ID_B_OPEN_DIAG,
+    ID_B_OPEN_MONITORS,
+    ID_B_OPEN_RATE,
+    ID_B_OPEN_PHONE,
+    ID_B_COPY_SETTINGS,
+    ID_B_PASTE_SETTINGS,
+    ID_B_APPLY_NOW,
+
+    /* unified preset library */
+    ID_B_PRESET_SAVE,
+    ID_B_PRESET_LOAD,
+    ID_B_PRESET_DUPLICATE,
+    ID_B_PRESET_DELETE,
+    ID_B_PRESET_EXPORT,
+    ID_B_PRESET_IMPORT,
+    ID_B_PRESET_CAT_GLOBAL,
+    ID_B_PRESET_CAT_GAME,
+    ID_B_PRESET_CAT_DISPLAY,
+    ID_B_PRESET_CAT_CROSS,
+    ID_B_PRESET_APPLY_DISPLAY,
+    ID_B_PRESET_RENAME,
+
+    /* game profile library */
+    ID_B_GAME_ADD,
+    ID_B_GAME_DUPLICATE,
+    ID_B_GAME_DELETE,
+    ID_B_GAME_RENAME,
+    ID_B_GAME_ENABLE,
+    ID_B_GAME_AUTOAPPLY,
+    ID_B_GAME_AUTORESTORE,
+    ID_B_GAME_APPLY_DISPLAY,
+    ID_B_GAME_MONITOR_DEFAULT,
+    ID_B_GAME_EXPORT,
+    ID_B_GAME_IMPORT,
+    ID_B_GAME_EXE_ADD,
+    ID_B_GAME_EXE_DEL,
+    ID_B_GAME_PATH_SET,
+    ID_B_GAME_RESET_BUILTINS,
+    ID_B_GAME_SAVE_LOOK,
+    ID_B_GAME_FAV,
+    ID_B_GAME_ACTIVATE,
+    ID_B_GAME_CLEAR,
+
+    /* display safety */
+    ID_B_MODE_CONFIRM,
+    ID_B_MODE_REVERT,
+    ID_B_MODE_APPLY_SEL,
+    ID_B_RESET_DISPLAY,
+    ID_B_HDR_REFRESH,
+
+    /* diagnostics page */
+    ID_B_DIAG_RESET_COLOR,
+    ID_B_DIAG_REFRESH,
+    ID_B_DIAG_COPY,
+    ID_B_XH_SAVE_PRESET,
+    ID_B_XH_RESET,
+    ID_B_PHONE_TOGGLE,
+
+    /* settings page */
+    ID_B_SET_TRAY_MIN,
+    ID_B_SET_STARTWIN,
+    ID_B_SET_AUTODETECT,
+    ID_B_SET_AUTOSWITCH,
+    ID_B_SET_ENGINE_START,
+    ID_B_SET_NOTIFY,
+    ID_B_SET_LOGGING,
+    ID_B_SET_THEME,
+    ID_B_SET_DEFAULT_MONITOR,
+    ID_B_SET_RESET,
+
+    /* ranges (indexed widget groups) */
+    ID_GAME_EXE_SLOT_BASE  = 960,  /* 960..967 executable rows        */
+    ID_MONITOR_TARGET_BASE = 970,  /* 970..977 per-profile monitor    */
+    ID_PRESET_CARD_BASE    = 980,  /* 980..1011 preset library cards  */
+    ID_MONITOR_ROW_BASE    = 1020, /* 1020..1027 monitor rows         */
+    ID_DIAG_ROW_BASE       = 1030, /* 1030..1059 diagnostics rows     */
+    ID_B_GROUP_RESET_BASE  = 1060  /* 1060..1067 colour-group resets  */
 };
 
 /* ---------------- Widget Types ---------------- */
@@ -338,7 +418,9 @@ enum {
     WT_SPLIT_PREVIEW,
     WT_CURVE_PREVIEW,
     WT_CHIP,
-    WT_QUICK_SAT
+    WT_QUICK_SAT,
+    WT_KV,
+    WT_NAVHEAD
 };
 
 typedef struct Widget {
@@ -383,6 +465,17 @@ int         Modes_Apply(int idx);
 int         Modes_ApplyMaxHz(void);
 int         Modes_ApplyNative(void);
 int         Modes_ApplyRes(int target_w, int target_h);
+int         Modes_ApplyResHz(int target_w, int target_h, int target_hz); /* 0 = ok, -1 = unsupported */
+int         Modes_ApplySafe(int idx, int timeout_ms);   /* confirm-or-rollback change */
+int         Modes_RollbackTick(void);                   /* 1 = the pending change was rolled back */
+int         Modes_ConfirmPending(void);                 /* 1 = the user kept the change */
+void        Modes_SetStateDir(const wchar_t *dir);      /* where display.pending lives */
+int         Modes_RecoverPendingFromDisk(void);         /* 1 = an unconfirmed mode was reverted */
+int         Modes_PendingMode(char *label, int cap);    /* "" when nothing pending */
+int         Modes_PendingChange(void);                  /* 1 = waiting for confirmation */
+int         Modes_PendingSecondsLeft(void);
+int         Modes_RollbackPending(void);                /* restore the previous DEVMODE */
+int         Modes_ConfirmPending(void);                 /* user kept the new mode */
 void        Modes_OpenHdrSettings(void);
 int         Modes_MonitorCount(void);
 MonitorInfo *Modes_GetMonitor(int i);
@@ -408,6 +501,31 @@ void        Prof_TickPending(void); /* fire a delayed profile apply without slee
 void        Prof_SetDetect(int on);
 int         Prof_Detect(void);
 int         Prof_AddCustom(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk);
+/* library CRUD (games/game_preset_manager.c) */
+int         Prof_FindExeAny(const wchar_t *exe);      /* ignores the enabled flag   */
+int         Prof_FindName(const wchar_t *name);
+int         Prof_Create(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk);
+int         Prof_DuplicateProfile(int src_idx, const wchar_t *new_name);
+int         Prof_Rename(int idx, const wchar_t *name);
+int         Prof_SetEnabled(int i, int on);
+int         Prof_SetAutoApply(int i, int on);
+int         Prof_SetAutoRestoreProfile(int i, int on);
+int         Prof_SetApplyDisplay(int i, int on);
+int         Prof_SetMonitorTarget(int i, int monitor_idx);
+int         Prof_SetExePath(int i, const wchar_t *path);
+int         Prof_AddExeName(int i, const wchar_t *exe);
+int         Prof_RemoveExeName(int i, int alias_slot);
+int         Prof_DeleteExeName(int i, int slot);      /* 0 = primary                */
+int         Prof_SetSubLook(int i, int sub, const Look *lk);
+int         Prof_AddSubMode(int i, const wchar_t *name, const Look *lk);
+int         Prof_DeleteSubMode(int i, int sub);
+int         Prof_MarkActivated(int idx);
+int         Prof_ResetBuiltins(void);
+int         Prof_ExportFile(int idx, const wchar_t *path);
+int         Prof_ExportLibrary(const wchar_t *path);
+int         Prof_ImportFile(int *out_idx, const wchar_t *path);
+int         Prof_ImportLibrary(const wchar_t *path);
+int         Prof_AutoSwitch(void);
 int         Prof_Delete(int i);
 int         Prof_ToggleFavorite(int i);
 const wchar_t *Prof_CurrentForeground(void);
@@ -466,7 +584,10 @@ void        Tools_Init(void);
 void        Tools_Shutdown(void);
 void        Tools_LaunchPattern(int pattern_id);
 void        Tools_ClosePattern(void);
-int         Tools_ExportDiagnostics(const wchar_t *filepath);
+int         Tools_ExportDiagnostics(const wchar_t *filepath);      /* JSON  */
+int         Tools_ExportDiagnosticsText(const wchar_t *filepath);/* text  */
+int         Tools_CopyDiagnostics(void);                         /* clipboard */
+int         Tools_DiagnosticsText(char *buf, size_t cap);
 int         Tools_BackupDisplayState(const wchar_t *filepath);
 int         Tools_RestoreDisplayState(const wchar_t *filepath);
 void        Tools_ToggleGamingMode(void);
@@ -530,5 +651,8 @@ static inline float clampf(float v, float a, float b) { return v < a ? a : (v > 
 #include "games/game_detector.h"
 #include "windows/window_manager.h"
 #include "settings/settings_store.h"
+#include "presets/preset_store.h"
+#include "display/display_capabilities.h"
+#include "diagnostics/diagnostics_report.h"
 
 #endif /* PLEXUSX_COMMON_H */

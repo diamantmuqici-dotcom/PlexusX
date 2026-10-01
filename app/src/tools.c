@@ -431,133 +431,121 @@ void Tools_ClosePattern(void)
 /* ---------------- Diagnostics Exporter ---------------- */
 /* JSON string emit for wide values: escapes backslashes and quotes (device
  * names carry \\; hand-built JSON must never be corruptible by a path). */
-static void fw_json_w(FILE *f, const wchar_t *v)
+/* ---------------- Diagnostics (one builder for every surface) --------------
+ * The report text, the clipboard copy and the exported file all come from
+ * diagnostics_report.h so on-screen and pasted content can never diverge. */
+
+static void fill_diag_input(PxDiagInput *in)
 {
-    for (; v && *v; v++) {
-        if (*v == L'"' || *v == L'\\') fputwc(L'\\', f);
-        fputwc(*v, f);
-    }
+    static PxEngineSnapshot snap;
+    static ModeInfo         mode;
+    const PxEffectiveState *eff = Eng_Effective();
+
+    memset(in, 0, sizeof *in);
+    Main_FillSnapshot(&snap);
+    Modes_Current(&mode);
+    in->app_name   = "PlexusX";
+    in->version    = "2.2.0";
+    in->build_date = "2026-10-01";
+    in->snap       = &snap;
+    in->eff        = eff;
+    in->gpu        = Dm_GpuInfo();
+    in->monitor_index = Modes_CurrentMonitorIndex();
+    in->monitor_count = Modes_MonitorCount();
+    in->mon        = Modes_GetMonitor(Modes_CurrentMonitorIndex());
+    in->mode       = &mode;
+    in->hdr_state  = PxHdr_StateOf(in->mon);
+    in->game       = Prof_GameState();
+    in->log        = Eng_LogRing();
+    in->profiles_total   = Prof_Count();
+    in->presets_total    = PxPre_Lib() ? PxPre_Lib()->n : 0;
+    in->config_corrupt   = PxSet_CfgCorrupt();
+    in->profiles_corrupt = PxSet_ProfCorrupt();
+    in->presets_corrupt  = PxPre_Corrupt();
 }
 
-static void fw_json_a(FILE *f, const char *v)
+int Tools_DiagnosticsText(char *buf, size_t cap)
 {
-    for (; v && *v; v++) {
-        if (*v == '"' || *v == '\\') fwprintf(f, L"\\%lc", (wchar_t)*v);
-        else fputwc((wchar_t)(unsigned char)*v, f);
-    }
+    PxDiagInput in;
+    if (!buf || cap < 64) return -1;
+    fill_diag_input(&in);
+    PxDiag_BuildText(&in, buf, cap);
+    return 0;
 }
 
 int Tools_ExportDiagnostics(const wchar_t *filepath)
 {
+    char *text;
+    FILE *f;
+    int rc = -1;
     if (!filepath) return -1;
-    FILE *f = _wfopen(filepath, L"w, ccs=UTF-8");
-    if (!f) return -1;
+    text = (char *)malloc(192 * 1024);
+    if (!text) return -1;
+    {
+        PxDiagInput in;
+        fill_diag_input(&in);
+        PxDiag_BuildJson(&in, text, 192 * 1024);
+    }
+    f = _wfopen(filepath, L"wb");
+    if (f) {
+        size_t n = strlen(text);
+        rc = (fwrite(text, 1, n, f) == n) ? 0 : -1;
+        fclose(f);
+    }
+    free(text);
+    return rc;
+}
 
-    const GpuInfo *gpu = Dm_GpuInfo();
-    ModeInfo cur;
-    Modes_Current(&cur);
+/* Human-readable report next to the JSON (bug reports are easier to read). */
+int Tools_ExportDiagnosticsText(const wchar_t *filepath)
+{
+    char *text;
+    FILE *f;
+    int rc = -1;
+    if (!filepath) return -1;
+    text = (char *)malloc(192 * 1024);
+    if (!text) return -1;
+    if (Tools_DiagnosticsText(text, 192 * 1024) == 0) {
+        f = _wfopen(filepath, L"wb");
+        if (f) {
+            size_t n = strlen(text);
+            rc = (fwrite(text, 1, n, f) == n) ? 0 : -1;
+            fclose(f);
+        }
+    }
+    free(text);
+    return rc;
+}
 
-    fwprintf(f, L"{\n");
-    fwprintf(f, L"  \"application\": \"PlexusX\",\n");
-    fwprintf(f, L"  \"version\": \"%ls\",\n", PX_VERSION);
-    fwprintf(f, L"  \"build_date\": \"%ls\",\n", PX_BUILD_DATE);
-    fwprintf(f, L"  \"architecture\": \"x86_64-windows\",\n");
-    fwprintf(f, L"  \"os\": \"Windows 10/11 x64\",\n");
-    fwprintf(f, L"  \"gpu\": {\n");
-    fwprintf(f, L"    \"vendor\": \"%ls\",\n", gpu->vendor_name);
-    fwprintf(f, L"    \"name\": \""); fw_json_w(f, gpu->name);
-    fwprintf(f, L"\",\n    \"driver_version\": \""); fw_json_w(f, gpu->driver_ver); fwprintf(f, L"\",\n");
-    fwprintf(f, L"    \"mag_api_available\": %ls,\n", gpu->mag_available ? L"true" : L"false");
-    fwprintf(f, L"    \"gamma_ramp_available\": %ls\n", gpu->gamma_available ? L"true" : L"false");
-    fwprintf(f, L"  },\n");
-    fwprintf(f, L"  \"active_display\": {\n");
-    fwprintf(f, L"    \"resolution\": \"%dx%d\",\n", cur.w, cur.h);
-    fwprintf(f, L"    \"refresh_rate_hz\": %d,\n", cur.hz);
-    fwprintf(f, L"    \"native\": %ls\n", cur.native ? L"true" : L"false");
-    fwprintf(f, L"  },\n");
-    fwprintf(f, L"  \"monitors\": [\n");
-    {
-        int nm = Modes_MonitorCount();
-        for (int i = 0; i < nm; i++) {
-            MonitorInfo *mi = Modes_GetMonitor(i);
-            if (!mi) continue;
-            char csbuf[48];
-            px_cs_name(mi->color_space_raw, csbuf, sizeof csbuf);
-            fwprintf(f, L"    {\n");
-            fwprintf(f, L"      \"device\": \""); fw_json_w(f, mi->dev_name);
-            fwprintf(f, L"\",\n      \"friendly\": \""); fw_json_w(f, mi->friendly);
-            fwprintf(f, L"\",\n      \"adapter\": \""); fw_json_w(f, mi->adapter);
-            fwprintf(f, L"\",\n");
-            fwprintf(f, L"      \"resolution\": \"%dx%d\",\n      \"refresh_hz\": %d,\n",
-                     mi->current_w, mi->current_h, mi->current_hz);
-            fwprintf(f, L"      \"bits_per_channel\": %d,\n", mi->bpc);
-            fwprintf(f, L"      \"color_space\": \""); fw_json_a(f, csbuf); fwprintf(f, L"\",\n");
-            fwprintf(f, L"      \"hdr_enabled\": %ls,\n      \"hdr_capable\": %ls,\n",
-                     mi->hdr_enabled ? L"true" : L"false", mi->hdr_capable ? L"true" : L"false");
-            fwprintf(f, L"      \"max_full_frame_nits\": %.0f,\n", (double)mi->max_full_frame_nits);
-            fwprintf(f, L"      \"is_primary\": %ls\n%s\n", mi->is_primary ? L"true" : L"false",
-                     (i + 1 == nm) ? L"    }" : L"    },");
+/* Clipboard copy (CF_UNICODETEXT) — the shortest path into a bug report. */
+int Tools_CopyDiagnostics(void)
+{
+    char *text = (char *)malloc(192 * 1024);
+    int ok = 0;
+    if (!text) return 0;
+    if (Tools_DiagnosticsText(text, 192 * 1024) == 0) {
+        int need = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
+        if (need > 0) {
+            HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)need * sizeof(WCHAR));
+            if (mem) {
+                WCHAR *dst = (WCHAR *)GlobalLock(mem);
+                if (dst && MultiByteToWideChar(CP_UTF8, 0, text, -1, dst, need) > 0) {
+                    GlobalUnlock(mem);
+                    if (OpenClipboard(g_hwnd)) {
+                        EmptyClipboard();
+                        if (SetClipboardData(CF_UNICODETEXT, mem)) ok = 1;
+                        CloseClipboard();
+                    }
+                    if (!ok) GlobalFree(mem);
+                } else {
+                    if (dst) GlobalUnlock(mem);
+                    GlobalFree(mem);
+                }
+            }
         }
     }
-    fwprintf(f, L"  ],\n");
-    fwprintf(f, L"  \"monitors_count\": %d,\n", Modes_MonitorCount());
-    {
-        const PxGameDisplayState *gs = Prof_GameState();
-        fwprintf(f, L"  \"game\": {\n");
-        fwprintf(f, L"    \"detected\": %ls,\n    \"foreground\": %ls,\n",
-                 gs->detected ? L"true" : L"false", gs->active ? L"true" : L"false");
-        fwprintf(f, L"    \"exe\": \""); fw_json_w(f, gs->exe);
-        fwprintf(f, L"\"\n    ,\"presentation\": \"%hs\"\n", px_pres_name(gs->presentation));
-        fwprintf(f, L"    ,\"output\": \"%hs\"\n", px_gameout_name(gs->game_output));
-        fwprintf(f, L"    ,\"profile\": %d, \"sub\": %d, \"applied\": %ls\n",
-                 gs->profile_idx, gs->sub_idx, gs->applied ? L"true" : L"false");
-        fwprintf(f, L"  },\n");
-    }
-    fwprintf(f, L"  \"crosshair_active\": %ls,\n", Xh_IsActive() ? L"true" : L"false");
-    fwprintf(f, L"  \"phone_control_active\": %ls,\n", Phone_IsRunning() ? L"true" : L"false");
-    {
-        const Look *req = Eng_GetRequested();
-        const Look *app = Eng_GetApplied();
-        fwprintf(f, L"  \"pipeline\": {\n");
-        fwprintf(f, L"    \"last_invalidate\": \"%ls\",\n", Eng_LastInvalidateReason());
-        fwprintf(f, L"    \"in_sync\": %ls,\n", Eng_RequestedMatchesApplied() ? L"true" : L"false");
-        {
-            const AppliedColorState *ap = Eng_Applied();
-            fwprintf(f, L"    \"applied_state\": {\n");
-            fwprintf(f, L"      \"have\": %ls, \"revision\": %u,\n", ap->have ? L"true" : L"false", ap->revision);
-            fwprintf(f, L"      \"matrix_ok\": %ls, \"matrix_verified\": %ls, \"matrix_skipped\": %ls,\n",
-                     ap->matrix_ok ? L"true" : L"false", ap->matrix_verified ? L"true" : L"false",
-                     ap->matrix_skipped ? L"true" : L"false");
-            fwprintf(f, L"      \"ramps_ok\": %ls, \"ramp_writes\": %d,\n",
-                     ap->ramps_ok ? L"true" : L"false", ap->ramp_writes);
-            fwprintf(f, L"      \"note\": \"%hs\"\n", ap->note);
-            fwprintf(f, L"    },\n");
-        }
-        if (req) {
-            fwprintf(f, L"    \"requested_vibrance\": %.1f,\n", req->vibrance);
-            fwprintf(f, L"    \"requested_saturation\": %.1f,\n", req->sat);
-        }
-        if (app) {
-            fwprintf(f, L"    \"applied_vibrance\": %.1f,\n", app->vibrance);
-            fwprintf(f, L"    \"applied_saturation\": %.1f\n", app->sat);
-        } else {
-            fwprintf(f, L"    \"applied_vibrance\": null\n");
-        }
-        fwprintf(f, L"  },\n");
-    }
-    {
-        const PxLog *log = Eng_LogRing();
-        static char jbuf[40000];
-        int n = PxLog_RenderJson(log, jbuf, sizeof jbuf, 128);
-        fwprintf(f, L"  \"log_count\": %u,\n  \"log_dropped\": %u,\n  \"log\": ",
-                 (unsigned)log->count, log->dropped);
-        for (int i = 0; i < n; i++) fputwc((wchar_t)(unsigned char)jbuf[i], f);
-        fwprintf(f, L"\n");
-    }
-    fwprintf(f, L"}\n");
-
-    fclose(f);
-    return 0;
+    free(text);
+    return ok;
 }
 
 int Tools_BackupDisplayState(const wchar_t *filepath)

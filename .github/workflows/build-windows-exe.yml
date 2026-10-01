@@ -14,7 +14,7 @@ jobs:
 
       - name: Run unit & integration test suites
         run: |
-          gcc -std=c11 -Wall -Wextra -Werror -O2 -o /tmp/test_runner tests/test_all.c -lm
+          gcc -std=c11 -Wall -Wextra -Werror -O2 -Iapp/src -o /tmp/test_runner tests/test_all.c app/src/games/game_profile.c -lm
           /tmp/test_runner
 
       - name: Web preview parity vs the C engine kernel
@@ -24,7 +24,7 @@ jobs:
           node scripts/site_parity.js --golden /tmp/parity.json
           cmp /tmp/parity.json site/parity.json
 
-      - name: Run engine scenario tests (real engine.c against mocked Win32, ASan + UBSan)
+      - name: Run engine scenario tests (real engine + pipeline against mocked Win32, ASan + UBSan)
         run: sh tests/host/run.sh
 
       - uses: actions/setup-python@v5
