@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Build PlexusX-Setup.exe by embedding PlexusX.exe as payload."""
+"""Build PlexusX-Setup.exe by embedding PlexusX.exe as payload.
+
+The installer is linked as a GUI program directly (-Wl,--subsystem,windows), so the linker selects the
+GUI CRT start-up.  The subsystem byte of a console-linked binary must never be patched afterwards: the
+console start-up code would then abort inside a GUI-flagged image.
+"""
 import os
+import shutil
 import subprocess
 import sys
 
@@ -33,15 +39,15 @@ def main():
         "-target", "x86_64-windows-gnu",
         "-O2", "-std=c11", "-Wall",
         "-DUNICODE", "-D_UNICODE", "-D_CRT_SECURE_NO_WARNINGS", "-municode",
-        "-o", "build/setup-raw.exe",
+        "-Wl,--subsystem,windows",
+        "-o", "build/PlexusX-Setup.exe",
         "tools/setup.c", "build/payload.c",
         "-luser32", "-lshell32", "-ladvapi32", "-lole32", "-lshlwapi"
     ]
     subprocess.check_call(cmd)
 
-    print("Fixing PE subsystem to GUI...")
-    fix_cmd = ["python3", "tools/fixsub.py", "build/setup-raw.exe", out_setup]
-    subprocess.check_call(fix_cmd)
+    # Plain copy: the linked image is shipped exactly as the linker produced it.
+    shutil.copyfile("build/PlexusX-Setup.exe", out_setup)
     print(f"Successfully generated {out_setup} ({os.path.getsize(out_setup)} bytes)")
 
 if __name__ == "__main__":

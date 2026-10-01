@@ -7,6 +7,16 @@ static HWND g_pattern_wnd = NULL;
 static int  g_cur_pattern = 0;
 static int  g_gaming_mode = 0;
 
+/* Fail-safe: a test pattern closes by itself after 10 s, and ANY key or mouse click dismisses it,
+ * so a solid black / green / white screen can never trap the user. */
+#define PAT_TIMER_ID    0x5058       /* "PX" */
+#define PAT_TIMER_MS    100
+#define PAT_TIMEOUT_MS  10000
+
+static ULONGLONG g_pat_deadline = 0;     /* GetTickCount64() value at which the pattern closes */
+static int       g_pat_secs = 0;         /* seconds currently shown in the banner */
+static BYTE      g_pat_down[256];        /* keys / buttons already held down when the pattern opened */
+
 enum {
     PAT_BLACK = 0,
     PAT_WHITE,
@@ -173,33 +183,174 @@ static void draw_pattern(HDC dc, const RECT *rc, int pat)
         break;
     }
     }
+}
 
-    /* Pattern info text at bottom */
-    HFONT font = CreateFontW(-16, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+/* ---------------- Fail-safe banner & input handling ---------------- */
+
+static int pat_secs_left(void)
+{
+    ULONGLONG now = GetTickCount64();
+    if (now >= g_pat_deadline) return 0;
+    return (int)((g_pat_deadline - now + 999) / 1000);
+}
+
+/* Remember what is already held down (e.g. the mouse button that launched the pattern) */
+static void pat_snapshot_input(void)
+{
+    for (int vk = 1; vk < 256; vk++)
+        g_pat_down[vk] = (GetAsyncKeyState(vk) & 0x8000) ? 1 : 0;
+}
+
+/* Global poll for a NEW key press / mouse button, independent of keyboard focus:
+ * if another window steals the focus the pattern must still be dismissable. */
+static int pat_any_new_input(void)
+{
+    int hit = 0;
+    for (int vk = 1; vk < 256; vk++) {
+        int down = (GetAsyncKeyState(vk) & 0x8000) ? 1 : 0;
+        if (down && !g_pat_down[vk]) hit = 1;
+        g_pat_down[vk] = (BYTE)down;
+    }
+    return hit;
+}
+
+/* High-contrast pill banner at the bottom of one monitor:
+ *     "Display Test Pattern • Click or press ANY key to exit (Xs)"
+ * Near-black pill + bright lime ring + white text stays readable on pure black, white,
+ * red, green and blue patterns alike.  `mon` is the monitor rect in window-client coordinates. */
+static void draw_banner(HDC dc, const RECT *mon, int secs)
+{
+    int mon_w = mon->right - mon->left;
+    int mon_h = mon->bottom - mon->top;
+    if (mon_w < 200 || mon_h < 120) return;
+
+    int fh = mon_h / 50;
+    if (fh < 16) fh = 16;
+    if (fh > 48) fh = 48;
+
+    wchar_t text[112], widest[112];
+    wsprintfW(text,   L"Display Test Pattern • Click or press ANY key to exit (%ds)", secs);
+    wsprintfW(widest, L"Display Test Pattern • Click or press ANY key to exit (%ds)", PAT_TIMEOUT_MS / 1000);
+
+    HFONT font = CreateFontW(-fh, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
     HGDIOBJ of = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(255, 96, 96));
-    RECT tr = { rc->left + 24, rc->bottom - 44, rc->right - 24, rc->bottom - 12 };
-    DrawTextW(dc, L"Press ESC or Click anywhere to exit test pattern", -1, &tr, DT_RIGHT | DT_SINGLELINE);
+    SIZE ext = { 0, 0 };
+    GetTextExtentPoint32W(dc, widest, lstrlenW(widest), &ext);   /* fixed width: the pill never resizes */
     SelectObject(dc, of);
+
+    int pad_x = fh * 2;
+    int pad_y = fh / 2 + 4;
+    int bw = ext.cx + pad_x * 2;
+    int bh = ext.cy + pad_y * 2;
+    if (bw > mon_w - 24) bw = mon_w - 24;
+    int bx = mon->left + (mon_w - bw) / 2;
+    int by = mon->bottom - bh - mon_h / 16;
+
+    /* Compose off-screen and blit through a pill-shaped clip: no flicker, transparent corners */
+    HDC mem = CreateCompatibleDC(dc);
+    HBITMAP bmp = CreateCompatibleBitmap(dc, bw, bh);
+    if (mem && bmp) {
+        HGDIOBJ obmp = SelectObject(mem, bmp);
+
+        HBRUSH ringbr = CreateSolidBrush(RGB(198, 255, 61));
+        RECT all = { 0, 0, bw, bh };
+        FillRect(mem, &all, ringbr);                       /* any edge pixel is ring-coloured */
+        DeleteObject(ringbr);
+
+        int ring = fh / 7 + 2;
+        HBRUSH fill = CreateSolidBrush(RGB(14, 14, 20));
+        HPEN pen = CreatePen(PS_SOLID, ring, RGB(198, 255, 61));
+        HGDIOBJ open = SelectObject(mem, pen);
+        HGDIOBJ obr = SelectObject(mem, fill);
+        RoundRect(mem, ring / 2, ring / 2, bw - ring / 2, bh - ring / 2, bh, bh);
+        SelectObject(mem, obr);
+        SelectObject(mem, open);
+        DeleteObject(fill);
+        DeleteObject(pen);
+
+        HGDIOBJ ofont = SelectObject(mem, font);
+        SetBkMode(mem, TRANSPARENT);
+        SetTextColor(mem, RGB(255, 255, 255));
+        RECT tr = { pad_x / 2, 0, bw - pad_x / 2, bh };
+        DrawTextW(mem, text, -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(mem, ofont);
+
+        HRGN pill = CreateRoundRectRgn(bx, by, bx + bw + 1, by + bh + 1, bh, bh);
+        SelectClipRgn(dc, pill);
+        BitBlt(dc, bx, by, bw, bh, mem, 0, 0, SRCCOPY);
+        SelectClipRgn(dc, NULL);
+        DeleteObject(pill);
+
+        SelectObject(mem, obmp);
+    }
+    if (bmp) DeleteObject(bmp);
+    if (mem) DeleteDC(mem);
     DeleteObject(font);
+}
+
+typedef struct BannerCtx {
+    HDC dc;
+    int secs;
+    POINT origin;       /* screen position of the window's client origin */
+} BannerCtx;
+
+static BOOL CALLBACK banner_monitor_proc(HMONITOR hm, HDC hdc, LPRECT mrc, LPARAM lp)
+{
+    (void)hm; (void)hdc;
+    BannerCtx *c = (BannerCtx *)lp;
+    RECT mon = { mrc->left - c->origin.x, mrc->top - c->origin.y,
+                 mrc->right - c->origin.x, mrc->bottom - c->origin.y };
+    draw_banner(c->dc, &mon, c->secs);
+    return TRUE;
+}
+
+/* One banner on EVERY monitor, so the exit hint is visible wherever the user is looking */
+static void paint_banners(HWND wnd, HDC dc, int secs)
+{
+    BannerCtx c;
+    c.dc = dc;
+    c.secs = secs;
+    c.origin.x = 0;
+    c.origin.y = 0;
+    ClientToScreen(wnd, &c.origin);
+    EnumDisplayMonitors(NULL, NULL, banner_monitor_proc, (LPARAM)&c);
+}
+
+static void pat_tick(HWND wnd)
+{
+    if (GetTickCount64() >= g_pat_deadline || pat_any_new_input()) {
+        DestroyWindow(wnd);                 /* 10 s elapsed, or a key / click happened anywhere */
+        return;
+    }
+    int secs = pat_secs_left();
+    if (secs != g_pat_secs) {               /* redraw only the pill, once per displayed second */
+        g_pat_secs = secs;
+        HDC dc = GetDC(wnd);
+        if (dc) {
+            paint_banners(wnd, dc, secs);
+            ReleaseDC(wnd, dc);
+        }
+    }
 }
 
 static LRESULT CALLBACK pattern_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
+    /* ANY key press or mouse click dismisses the pattern immediately */
     case WM_KEYDOWN:
-        if (wp == VK_ESCAPE || wp == VK_SPACE) {
-            DestroyWindow(wnd);
-            g_pattern_wnd = NULL;
+    case WM_SYSKEYDOWN:
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
+        DestroyWindow(wnd);
+        return 0;
+    case WM_TIMER:
+        if (wp == PAT_TIMER_ID) {
+            pat_tick(wnd);
             return 0;
         }
         break;
-    case WM_LBUTTONDOWN:
-    case WM_RBUTTONDOWN:
-        DestroyWindow(wnd);
-        g_pattern_wnd = NULL;
-        return 0;
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT: {
@@ -208,11 +359,13 @@ static LRESULT CALLBACK pattern_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         RECT rc;
         GetClientRect(wnd, &rc);
         draw_pattern(dc, &rc, g_cur_pattern);
+        paint_banners(wnd, dc, pat_secs_left());
         EndPaint(wnd, &ps);
         return 0;
     }
     case WM_DESTROY:
-        g_pattern_wnd = NULL;
+        KillTimer(wnd, PAT_TIMER_ID);
+        if (g_pattern_wnd == wnd) g_pattern_wnd = NULL;
         return 0;
     }
     return DefWindowProcW(wnd, msg, wp, lp);
@@ -236,7 +389,7 @@ void Tools_Shutdown(void)
 
 void Tools_LaunchPattern(int pattern_id)
 {
-    if (g_pattern_wnd) DestroyWindow(g_pattern_wnd);
+    Tools_ClosePattern();
 
     g_cur_pattern = clampi(pattern_id, 0, PAT_COUNT - 1);
 
@@ -245,12 +398,26 @@ void Tools_LaunchPattern(int pattern_id)
     int sw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     int sh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-    g_pattern_wnd = CreateWindowExW(WS_EX_TOPMOST, PX_TEST_CLASS, L"PlexusX Pattern",
-                                    WS_POPUP | WS_VISIBLE, sx, sy, sw, sh,
-                                    NULL, NULL, g_inst, NULL);
-    if (g_pattern_wnd) {
-        SetForegroundWindow(g_pattern_wnd);
+    /* Created hidden: the countdown and the input baseline are in place before the first paint */
+    HWND wnd = CreateWindowExW(WS_EX_TOPMOST, PX_TEST_CLASS, L"PlexusX Pattern",
+                               WS_POPUP, sx, sy, sw, sh, NULL, NULL, g_inst, NULL);
+    if (!wnd) return;
+    g_pattern_wnd = wnd;
+
+    g_pat_deadline = GetTickCount64() + PAT_TIMEOUT_MS;
+    g_pat_secs = PAT_TIMEOUT_MS / 1000;
+    pat_snapshot_input();
+
+    /* A full-screen pattern that cannot close itself is a trap: if the timer is unavailable, don't show it */
+    if (!SetTimer(wnd, PAT_TIMER_ID, PAT_TIMER_MS, NULL)) {
+        DestroyWindow(wnd);
+        g_pattern_wnd = NULL;
+        return;
     }
+
+    ShowWindow(wnd, SW_SHOW);
+    SetForegroundWindow(wnd);
+    SetFocus(wnd);
 }
 
 void Tools_ClosePattern(void)

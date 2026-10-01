@@ -633,6 +633,7 @@ void Prof_Poll(void)
             wchar_t msg[128];
             wsprintfW(msg, L"%s: %s profile applied", p->name, p->sub[p->active_sub].name);
             Ui_Notify(msg);
+            Eng_Resync();           /* a game taking the screen may have reset the LUT */
             Main_ApplyAll();
             InvalidateRect(g_hwnd, NULL, FALSE);
         }
@@ -641,6 +642,7 @@ void Prof_Poll(void)
         Ui_LoadLook(&g_saved_pre_game_look);
         g_has_pre_game_look = 0;
         Ui_Notify(L"Desktop display profile restored");
+        Eng_Resync();               /* the game's exit may have reset the LUT */
         Main_ApplyAll();
         InvalidateRect(g_hwnd, NULL, FALSE);
     }

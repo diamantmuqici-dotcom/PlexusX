@@ -17,6 +17,9 @@ jobs:
           gcc -std=c11 -Wall -Werror -O2 -o tests/test_runner tests/test_all.c -lm
           ./tests/test_runner
 
+      - name: Run engine scenario tests (real engine.c against mocked Win32, ASan + UBSan)
+        run: sh tests/host/run.sh
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -29,6 +32,9 @@ jobs:
           cd app && make clean && make
           cd ../site/download
           sha256sum PlexusX.exe PlexusX-Setup.exe > SHA256SUMS.txt
+
+      - name: Verify PE subsystem (GUI) and entry points
+        run: python3 app/tools/verify_pe.py site/download/PlexusX.exe site/download/PlexusX-Setup.exe
 
       - name: Print SHA-256 Checksums
         run: cat site/download/SHA256SUMS.txt
