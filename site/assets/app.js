@@ -17,13 +17,94 @@ function bindRange(el, fn) {
   return run;
 }
 
-/* ---------- shared filter maths (mirrors the app) ---------- */
+/* ---------- shared filter maths ----------
+ * PRIMARY path: the REAL engine kernel (assets/color_engine.js — an exact port
+ * of app/src/color/color_math.h, CI-checked for parity against the C source)
+ * rendering into a canvas overlay, i.e. the same matrix + gamma-ramp LUT the
+ * Windows app pushes to DWM and the GPU.  CSS filters remain only as a
+ * fallback when canvas or image pixel access is unavailable; the caption on
+ * every preview states plainly that this is a browser preview, not a live
+ * capture of your display.
+ */
 function cssFilter({ sat = 100, bri = 0, con = 0, hue = 0, gamma = 1 }) {
-  // gamma approximated as a brightness/contrast pair (preview only)
+  // fallback ONLY (no PxColorEngine loaded): approximate preview
   const gBri = bri + (1 - gamma) * 60;
   const gCon = con + (gamma - 1) * 22;
   return `saturate(${sat}%) brightness(${1 + gBri / 130}) contrast(${1 + gCon / 130}) hue-rotate(${hue}deg)`;
 }
+
+const ENGINE = typeof PxColorEngine !== "undefined" ? PxColorEngine : null;
+
+function lookFrom(partial) {
+  const l = ENGINE ? ENGINE.neutral() : null;
+  if (!l) return partial;
+  Object.assign(l, partial || {});
+  return l;
+}
+
+/* Attach an engine renderer to an <img>: draws the processed pixels into a
+ * canvas overlaid on the image.  Returns render(lookFields) or null when the
+ * image cannot be read (cross-origin), so callers can fall back. */
+function attachEnginePreview(img) {
+  if (!ENGINE || !img || !window.HTMLCanvasElement) return null;
+  const wrap = img.parentElement;
+  const cv = document.createElement("canvas");
+  cv.className = "engine-canvas";
+  cv.setAttribute("aria-hidden", "true");
+  wrap.appendChild(cv);
+  let srcData = null, pending = null, lastLook = null, raf = 0;
+
+  function rebuild() {
+    const w = Math.min(img.naturalWidth || 0, 720);
+    if (!w) return false;
+    const h = Math.round(w * (img.naturalHeight / img.naturalWidth));
+    const sc = document.createElement("canvas");
+    sc.width = w; sc.height = h;
+    const sctx = sc.getContext("2d", { willReadFrequently: true });
+    try {
+      sctx.drawImage(img, 0, 0, w, h);
+      srcData = sctx.getImageData(0, 0, w, h);
+    } catch { srcData = null; return false; }     /* tainted canvas: no pixel access */
+    cv.width = w; cv.height = h;
+    return true;
+  }
+
+  function render(partial) {
+    if (!srcData) return;
+    const look = lookFrom(partial);
+    if (partial && partial.enabled === 0) {          /* engine bypass = raw pixels */
+      cv.getContext("2d").putImageData(srcData, 0, 0);
+      return;
+    }
+    const out = new ImageData(new Uint8ClampedArray(srcData.data), srcData.width, srcData.height);
+    const ramp = ENGINE.calcRamp(look);
+    const m = ENGINE.buildEffect(look);
+    const px = out.data;
+    for (let i = 0; i < px.length; i += 4) {      /* per pixel: matrix, then LUT — exactly like the OS pipeline */
+      const r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255;
+      let rr = m[0][0] * r + m[1][0] * g + m[2][0] * b + m[3][0] * 1 + m[4][0];
+      let gg = m[0][1] * r + m[1][1] * g + m[2][1] * b + m[3][1] * 1 + m[4][1];
+      let bb = m[0][2] * r + m[1][2] * g + m[2][2] * b + m[3][2] * 1 + m[4][2];
+      px[i]     = ENGINE.sampleRamp(ramp[0], rr) * 255;
+      px[i + 1] = ENGINE.sampleRamp(ramp[1], gg) * 255;
+      px[i + 2] = ENGINE.sampleRamp(ramp[2], bb) * 255;
+    }
+    cv.getContext("2d").putImageData(out, 0, 0);
+  }
+
+  function schedule(partial) {
+    if (partial) lastLook = partial;
+    pending = partial || lastLook;
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; const p = pending; pending = null; render(p); });
+  }
+
+  const boot = () => { if (!rebuild()) return; img.style.visibility = "hidden"; schedule(lastLook); };
+  img.addEventListener("load", boot);          /* also fires on game switches (stage <img> src changes) */
+  if (img.complete && img.naturalWidth) boot();
+  return { render: schedule, ok: () => !!srcData };
+}
+
 function tint(warmEl, coolEl, temp) {
   if (!warmEl || !coolEl) return;
   const t = Math.max(-1, Math.min(1, temp / 100));
@@ -38,9 +119,11 @@ addEventListener("scroll", () => nav.classList.toggle("stuck", scrollY > 30), { 
 
 /* ---------- hero ---------- */
 const heroSat = $("#heroSat"), heroImg = $("#heroImg");
+const heroEng = attachEnginePreview(heroImg);
 bindRange(heroSat, v => {
   $("#heroSatVal").textContent = v + "%";
-  heroImg.style.filter = cssFilter({ sat: v, con: 8 });
+  if (heroEng && heroEng.ok()) heroEng.render({ sat: v, vibrance: 100, con: 108 });
+  else heroImg.style.filter = cssFilter({ sat: v, con: 8 });
   paintRange(heroSat);
 });
 heroSat.dispatchEvent(new Event("input"));
@@ -58,13 +141,15 @@ heroSat.dispatchEvent(new Event("input"));
     after.style.width = pos + "%";
     handle.style.left = pos + "%";
   }
+  const cmpEng = attachEnginePreview(afterImg);
   function applyPreview() {
     const s = +sat.value, c = +con.value, t = +temp.value;
     $("#cmpSatVal").textContent = s + "%";
     $("#cmpConVal").textContent = sgn(c);
     $("#cmpTempVal").textContent = sgn(t);
     $("#cmpTag").textContent = "CHROMAX · " + s + "%";
-    afterImg.style.filter = cssFilter({ sat: s, con: c });
+    if (cmpEng && cmpEng.ok()) cmpEng.render({ sat: s, con: 100 + c, temp: 6500 + t * 22 });
+    else afterImg.style.filter = cssFilter({ sat: s, con: c });
     tint($("#cmpWarm"), $("#cmpCool"), t);
     [sat, con, temp].forEach(paintRange);
   }
@@ -129,12 +214,20 @@ function code(g) {
   const p = n => String(Math.abs(n)).padStart(2, "0");
   return `CHX-${g.id.toUpperCase()}-${g.sat}-${g.bri < 0 ? "m" : ""}${p(g.bri)}-${p(g.con)}-${p(g.temp)}`;
 }
+const stageEng = attachEnginePreview(stageImg);
 function renderStage() {
   const g = current;
   const s = { sat: +stRange.sat.value, bri: +stRange.bri.value, con: +stRange.con.value,
               temp: +stRange.temp.value, gamma: +stRange.gam.value / 100 };
   $("#stageName").textContent = g.name.toUpperCase();
-  stageImg.style.filter = cssFilter(s);
+  if (stageEng && stageEng.ok()) {
+    stageEng.render({ sat: s.sat, vibrance: 100, bri: 100 + s.bri, con: 100 + s.con,
+                      gamma: s.gamma, temp: 6500 + s.temp * 22,
+                      shadows: g.shadows || 100, highlights: g.highlights || 100,
+                      clarity: g.clarity || 100, hue: g.hue || 0 });
+  } else {
+    stageImg.style.filter = cssFilter(s);
+  }
   tint($("#stWarm"), $("#stCool"), s.temp);
   $("#stSatVal").textContent = s.sat + "%";
   $("#stBriVal").textContent = sgn(s.bri);

@@ -112,7 +112,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
         wchar_t str_disp[] = L"PlexusX (Gaming Display Optimizer)";
         RegSetValueExW(hKey, L"DisplayName", 0, REG_SZ, (BYTE *)str_disp, sizeof(str_disp));
 
-        wchar_t str_ver[] = L"2.0.0";
+        wchar_t str_ver[] = L"2.2.0";
         RegSetValueExW(hKey, L"DisplayVersion", 0, REG_SZ, (BYTE *)str_ver, sizeof(str_ver));
 
         wchar_t str_pub[] = L"PlexusX Open Source";

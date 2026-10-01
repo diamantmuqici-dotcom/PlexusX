@@ -1,7 +1,20 @@
-/* PlexusX — Display, Refresh Rate, Stretched 4:3 Modes & HDR Manager
- * Legit Windows display APIs only. No driver hacking.
+/* PlexusX — DisplayManager (formerly modes.c): monitors, resolution & refresh
+ * modes, stretched 4:3 presets, and the REAL DisplayState (HDR, bits per
+ * channel, color space, luminance) collected from the OS.
+ *
+ * Legit Windows display APIs only.  No driver hacking:
+ *   - EnumDisplaySettingsW / EnumDisplayDevicesW for modes + monitor names
+ *   - ChangeDisplaySettingsExW with CDS_TEST rollback protection
+ *   - DXGI 1.6 (IDXGIOutput6::GetDesc1) for color space / bpc / luminance —
+ *     values the OS reports, never invented.  If dxgi.dll is unavailable the
+ *     fields stay 0 / PX_CS_UNKNOWN and the UIs render "—".
+ *
+ * The mode tables and classification helpers live in display_state.h (pure)
+ * so the sort / pick / HDR predicates are host unit-tested.
  */
 #include "common.h"
+#include <dxgi.h>
+#include <dxgi1_6.h>
 
 #define MAX_MODES    128
 #define MAX_MONITORS 8
@@ -16,21 +29,87 @@ static int         g_cur_monitor = 0;
 
 static wchar_t     g_active_dev[32];
 
-static int detect_aspect(int w, int h)
-{
-    if (w * 9 == h * 16) return 0;                     /* 16:9 */
-    if ((long)w * 3 == (long)h * 4) return 1;          /* 4:3 */
-    if (w * 10 == h * 16) return 2;                    /* 16:10 */
-    if (w * 9 >= h * 21) return 3;                     /* Ultrawide 21:9 or 32:9 */
-    return 4;                                          /* Other */
-}
+static GpuInfo     g_gpu;            /* collected here now (was inside engine.c) */
+static int         g_pipe_mag = 0;   /* reported by the color pipeline at init  */
+static int         g_pipe_ramps = 0;
 
 static int mode_cmp(const void *a, const void *b)
 {
-    const ModeInfo *x = a, *y = b;
-    long ax = (long)x->w * x->h, ay = (long)y->w * y->h;
-    if (ax != ay) return (int)(ay - ax);
-    return y->hz - x->hz;
+    return PX_MODE_CMP(a, b);
+}
+
+/* ---------------- GPU + per-output color state via DXGI 1.6 ----------------
+ * One pass over factory→adapters→outputs.  Each output matched to a
+ * MonitorInfo entry (by \\.\DISPLAYn name) gets BitsPerColor / ColorSpace /
+ * luminance written in; the first desktop-scoped adapter becomes GpuInfo.
+ * GUIDs are local literals: no initguid/libuuid link-order games. */
+static const GUID g_iid_dxgi_factory1 =
+    { 0x770aae78, 0xf26f, 0x4dba, { 0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87 } };
+static const GUID g_iid_dxgi_output6 =
+    { 0x068346e8, 0xaaec, 0x4b84, { 0xad, 0xd7, 0x13, 0x7f, 0x51, 0x3f, 0x77, 0xa1 } };
+
+typedef HRESULT (WINAPI *fn_CreateDXGIFactory1)(REFIID riid, void **factory);
+
+static void collect_dxgi_state(void)
+{
+    HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
+    if (!dxgi) return;
+    fn_CreateDXGIFactory1 pCreate =
+        (fn_CreateDXGIFactory1)(void (*)(void))GetProcAddress(dxgi, "CreateDXGIFactory1");
+    if (!pCreate) { FreeLibrary(dxgi); return; }
+
+    IDXGIFactory1 *factory = NULL;
+    if (FAILED(pCreate(&g_iid_dxgi_factory1, (void **)&factory)) || !factory) {
+        FreeLibrary(dxgi);
+        return;
+    }
+
+    for (UINT ai = 0; ; ai++) {
+        IDXGIAdapter1 *adapter = NULL;
+        if (FAILED(factory->lpVtbl->EnumAdapters1(factory, ai, &adapter)) || !adapter) break;
+
+        DXGI_ADAPTER_DESC1 ad;
+        memset(&ad, 0, sizeof ad);
+        if (SUCCEEDED(adapter->lpVtbl->GetDesc1(adapter, &ad)) &&
+            !(ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
+            (g_gpu.vendor == GPU_VENDOR_UNKNOWN || !g_gpu.name[0])) {
+            lstrcpynW(g_gpu.name, ad.Description, 128);
+            if (ad.VendorId == 0x10DE)      { g_gpu.vendor = GPU_VENDOR_NVIDIA; lstrcpyW(g_gpu.vendor_name, L"NVIDIA"); }
+            else if (ad.VendorId == 0x1002) { g_gpu.vendor = GPU_VENDOR_AMD;   lstrcpyW(g_gpu.vendor_name, L"AMD"); }
+            else if (ad.VendorId == 0x8086) { g_gpu.vendor = GPU_VENDOR_INTEL; lstrcpyW(g_gpu.vendor_name, L"Intel"); }
+            else                            { g_gpu.vendor = GPU_VENDOR_UNKNOWN; lstrcpyW(g_gpu.vendor_name, L"Display adapter"); }
+        }
+
+        for (UINT oi = 0; ; oi++) {
+            IDXGIOutput *out = NULL;
+            if (FAILED(adapter->lpVtbl->EnumOutputs(adapter, oi, &out)) || !out) break;
+
+            IDXGIOutput6 *o6 = NULL;
+            if (SUCCEEDED(out->lpVtbl->QueryInterface(out, &g_iid_dxgi_output6, (void **)&o6)) && o6) {
+                DXGI_OUTPUT_DESC1 d1;
+                if (SUCCEEDED(o6->lpVtbl->GetDesc1(o6, &d1))) {
+                    for (int mi = 0; mi < g_nmonitors; mi++) {
+                        if (lstrcmpW(g_monitors[mi].dev_name, d1.DeviceName) != 0) continue;
+                        MonitorInfo *m = &g_monitors[mi];
+                        m->bpc = (int)d1.BitsPerColor;
+                        m->color_space_raw = (int)d1.ColorSpace;
+                        m->hdr_enabled = px_cs_is_hdr(m->color_space_raw);
+                        m->min_nits = d1.MinLuminance;
+                        m->max_nits = d1.MaxLuminance;
+                        m->max_full_frame_nits = d1.MaxFullFrameLuminance;
+                        /* Capable == currently HDR (OS says so) or the panel reports
+                         * HDR10-class full-frame luminance.  Nothing more is claimed. */
+                        m->hdr_capable = m->hdr_enabled || d1.MaxFullFrameLuminance >= 300.0f;
+                    }
+                }
+                o6->lpVtbl->Release(o6);
+            }
+            out->lpVtbl->Release(out);
+        }
+        adapter->lpVtbl->Release(adapter);
+    }
+    factory->lpVtbl->Release(factory);
+    FreeLibrary(dxgi);
 }
 
 /* ---------------- Enumerate All Attached Monitors ---------------- */
@@ -49,7 +128,9 @@ static BOOL CALLBACK enum_mon_proc(HMONITOR hm, HDC hdc, LPRECT rc, LPARAM lp)
     lstrcpynW(m->dev_name, mi.szDevice, 32);
     m->rc = mi.rcMonitor;
     m->is_primary = (mi.dwFlags & MONITORINFOF_PRIMARY) ? 1 : 0;
-    m->bpc = 8;
+    m->bpc = 0;
+    m->color_space_raw = PX_CS_UNKNOWN;
+    m->min_nits = m->max_nits = m->max_full_frame_nits = 0.0f;
 
     /* Get friendly name from secondary EnumDisplayDevicesW call */
     DISPLAY_DEVICEW dd;
@@ -76,10 +157,24 @@ static BOOL CALLBACK enum_mon_proc(HMONITOR hm, HDC hdc, LPRECT rc, LPARAM lp)
         m->current_w = (int)dm.dmPelsWidth;
         m->current_h = (int)dm.dmPelsHeight;
         m->current_hz = (int)dm.dmDisplayFrequency;
-        m->bpc = (int)dm.dmBitsPerPel;
+        m->bpc = 0;   /* refresh replaces this with the DXGI report (or leaves unknown) */
     }
 
     return TRUE;
+}
+
+/* Driver version: DISPLAY_DEVICEW carries no version on current Windows, so read
+ * the class key the PnP installer writes for the primary display adapter (always
+ * present; read-only; no admin).  Failure stays "" — the UI prints "unknown". */
+static void collect_driver_version(void)
+{
+    wchar_t buf[64];
+    DWORD sz = sizeof buf, type = 0;
+    g_gpu.driver_ver[0] = 0;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE,
+                     L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000",
+                     L"DriverVersion", RRF_RT_REG_SZ, &type, buf, &sz) == ERROR_SUCCESS)
+        lstrcpynW(g_gpu.driver_ver, buf, 64);
 }
 
 int Modes_Refresh(void)
@@ -90,6 +185,7 @@ int Modes_Refresh(void)
         /* Fallback */
         lstrcpyW(g_monitors[0].dev_name, L"\\\\.\\DISPLAY1");
         lstrcpyW(g_monitors[0].friendly, L"Primary Display");
+        g_monitors[0].color_space_raw = PX_CS_UNKNOWN;
         g_monitors[0].is_primary = 1;
         g_nmonitors = 1;
     }
@@ -122,12 +218,12 @@ int Modes_Refresh(void)
         g_modes[g_nmodes].w = (int)dm.dmPelsWidth;
         g_modes[g_nmodes].h = (int)dm.dmPelsHeight;
         g_modes[g_nmodes].hz = hz;
-        g_modes[g_nmodes].aspect = detect_aspect(g_modes[g_nmodes].w, g_modes[g_nmodes].h);
+        g_modes[g_nmodes].aspect = px_aspect_of(g_modes[g_nmodes].w, g_modes[g_nmodes].h);
         g_modes[g_nmodes].native = 0;
         g_modes[g_nmodes].supported = 1;
         g_nmodes++;
     }
-    qsort(g_modes, g_nmodes, sizeof g_modes[0], mode_cmp);
+    qsort(g_modes, (size_t)g_nmodes, sizeof g_modes[0], mode_cmp);
 
     /* Identify current & native mode */
     memset(&dm, 0, sizeof dm);
@@ -137,7 +233,7 @@ int Modes_Refresh(void)
         g_cur_mode.h = (int)dm.dmPelsHeight;
         g_cur_mode.hz = (int)dm.dmDisplayFrequency;
         if (g_cur_mode.hz < 24) g_cur_mode.hz = 60;
-        g_cur_mode.aspect = detect_aspect(g_cur_mode.w, g_cur_mode.h);
+        g_cur_mode.aspect = px_aspect_of(g_cur_mode.w, g_cur_mode.h);
         g_cur_mode.native = 1;
 
         for (int j = 0; j < g_nmodes; j++) {
@@ -148,7 +244,52 @@ int Modes_Refresh(void)
             }
         }
     }
+
+    /* DisplayState refresh: GPU name + per-output HDR / color space (real APIs) */
+    memset(&g_gpu, 0, sizeof g_gpu);
+    g_gpu.mag_available = g_pipe_mag;
+    g_gpu.gamma_available = (g_pipe_ramps > 0);
+    collect_driver_version();
+    collect_dxgi_state();
+    g_gpu.hdr_detected = 0;
+    for (int i = 0; i < g_nmonitors; i++)
+        if (g_monitors[i].hdr_enabled) { g_gpu.hdr_detected = 1; break; }
+
     return g_nmodes;
+}
+
+/* The color pipeline announces what output paths it actually got running. */
+void Dm_ReportOutputs(int mag_available, int ramp_displays)
+{
+    g_pipe_mag = mag_available;
+    g_pipe_ramps = ramp_displays;
+    g_gpu.mag_available = mag_available;
+    g_gpu.gamma_available = (ramp_displays > 0);
+}
+
+const GpuInfo *Dm_GpuInfo(void) { return &g_gpu; }
+
+int Dm_HdrAny(void)
+{
+    for (int i = 0; i < g_nmonitors; i++)
+        if (g_monitors[i].hdr_enabled) return 1;
+    return 0;
+}
+
+/* Index of the monitor whose rect contains (or is nearest to) r; -1 = none. */
+int Modes_FindMonitorForRect(const RECT *r)
+{
+    if (!r) return -1;
+    long best = -1;
+    int best_i = -1;
+    for (int i = 0; i < g_nmonitors; i++) {
+        RECT m = g_monitors[i].rc;
+        long ix = (r->right < m.right ? r->right : m.right) - (r->left > m.left ? r->left : m.left);
+        long iy = (r->bottom < m.bottom ? r->bottom : m.bottom) - (r->top > m.top ? r->top : m.top);
+        long area = (ix > 0 && iy > 0) ? ix * iy : 0;
+        if (area > best) { best = area; best_i = i; }
+    }
+    return best_i >= 0 ? best_i : 0;
 }
 
 int Modes_Count(void) { return g_nmodes; }
@@ -176,9 +317,9 @@ int Modes_Apply(int idx)
     dm.dmSize = sizeof dm;
     if (!EnumDisplaySettingsW(g_active_dev, ENUM_CURRENT_SETTINGS, &dm)) return -1;
 
-    dm.dmPelsWidth = g_modes[idx].w;
-    dm.dmPelsHeight = g_modes[idx].h;
-    dm.dmDisplayFrequency = g_modes[idx].hz;
+    dm.dmPelsWidth = (DWORD)g_modes[idx].w;
+    dm.dmPelsHeight = (DWORD)g_modes[idx].h;
+    dm.dmDisplayFrequency = (DWORD)g_modes[idx].hz;
     dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
 
     /* Rollback protection: verify mode with CDS_TEST first */
@@ -197,19 +338,8 @@ int Modes_Apply(int idx)
 
 int Modes_ApplyMaxHz(void)
 {
-    /* Find mode with current width & height and highest available Hz */
-    int best_idx = -1;
-    int max_hz = 0;
-    for (int i = 0; i < g_nmodes; i++) {
-        if (g_modes[i].w == g_cur_mode.w && g_modes[i].h == g_cur_mode.h) {
-            if (g_modes[i].hz > max_hz) {
-                max_hz = g_modes[i].hz;
-                best_idx = i;
-            }
-        }
-    }
-    if (best_idx >= 0) return Modes_Apply(best_idx);
-    return -1;
+    int idx = px_modes_pick_best(g_modes, g_nmodes, g_cur_mode.w, g_cur_mode.h, 0);
+    return idx >= 0 ? Modes_Apply(idx) : -1;
 }
 
 int Modes_ApplyNative(void)
@@ -222,18 +352,8 @@ int Modes_ApplyNative(void)
 
 int Modes_ApplyRes(int target_w, int target_h)
 {
-    int best_idx = -1;
-    int max_hz = 0;
-    for (int i = 0; i < g_nmodes; i++) {
-        if (g_modes[i].w == target_w && g_modes[i].h == target_h) {
-            if (g_modes[i].hz > max_hz) {
-                max_hz = g_modes[i].hz;
-                best_idx = i;
-            }
-        }
-    }
-    if (best_idx >= 0) return Modes_Apply(best_idx);
-    return -1;
+    int idx = px_modes_pick_best(g_modes, g_nmodes, target_w, target_h, 0);
+    return idx >= 0 ? Modes_Apply(idx) : -1;
 }
 
 void Modes_OpenHdrSettings(void)

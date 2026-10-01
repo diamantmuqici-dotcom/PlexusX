@@ -17,6 +17,7 @@ typedef int BOOL; typedef unsigned short WORD; typedef uint32_t DWORD; typedef u
 typedef uint64_t ULONGLONG; typedef uint64_t ULONG_PTR; typedef int64_t LONG_PTR; typedef int64_t LPARAM; typedef uint64_t WPARAM; typedef LONG_PTR LRESULT;
 typedef void *HANDLE, *HDC, *HMODULE, *HWND, *HINSTANCE, *HICON, *HFONT, *HBRUSH, *HMONITOR, *LPVOID, *HGDIOBJ, *HPEN, *HBITMAP, *HRGN;
 typedef const void *LPCVOID; typedef DWORD COLORREF; typedef unsigned char BYTE;
+#define _WINDEF_
 typedef struct { LONG left, top, right, bottom; } RECT;
 typedef struct { LONG x, y; } POINT;
 typedef void (*FARPROC)(void);
@@ -34,7 +35,8 @@ typedef void (*FARPROC)(void);
 #define DISPLAY_DEVICE_ATTACHED_TO_DESKTOP 1
 typedef struct { DWORD cb; wchar_t DeviceName[32]; wchar_t DeviceString[128]; DWORD StateFlags; wchar_t DeviceID[128]; wchar_t DeviceKey[128]; } DISPLAY_DEVICEW;
 
-/* --- the subset of the API engine.c uses (implemented in host_mock.c) --- */
+/* --- the subset of the API the color engine + pipeline use (implemented in host_mock.c) --- */
+DWORD GetTickCount(void);
 HMODULE LoadLibraryW(const wchar_t *); FARPROC GetProcAddress(HMODULE, const char *);
 HDC CreateDCA(const char *, const char *, const char *, const void *); BOOL DeleteDC(HDC);
 BOOL GetDeviceGammaRamp(HDC, LPVOID); BOOL SetDeviceGammaRamp(HDC, LPVOID);

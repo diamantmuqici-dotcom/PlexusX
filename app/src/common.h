@@ -1,6 +1,26 @@
 /* PlexusX — Elite Windows Gaming Display & Visual Optimization Center
  * Free & Open Source · No Cheats · Legit Display & Magnification APIs
  * Architecture: Win32 C11 · Cross-compiled with Zig/MinGW
+ *
+ * Module map (each responsibility lives in exactly ONE place):
+ *   color/look.h               the color parameter block (one struct, everywhere)
+ *   color/color_state.h        ColorState        — authoritative REQUESTED config
+ *   color/applied_color_state.h AppliedColorState — what the hardware CONFIRMED
+ *   color/color_math.h         the shared transform kernel (tests compile it directly)
+ *   color/color_transform.h    ColorTransform    — the single source of color math
+ *   color/color_pipeline.h/.c  ColorPipeline     — DWM matrix + GPU ramps + crash recovery
+ *   color/color_engine.h/.c    ColorEngine       — the one orchestrator (Eng_*)
+ *   display/display_state.h    DisplayState      — monitors, modes, HDR, color space, presentation
+ *   display/display_manager.c  DisplayManager    — detection, changes, DXGI capture (Modes_/Dm_*)
+ *   games/game_state.h         GameDetector state machine (pure; launch/exit/ALT+TAB)
+ *   games/game_display_state.h GameDisplayState  — live game output truth
+ *   games/game_detector.c      foreground facts: process + window geometry (PxDetect_*)
+ *   games/game_preset_manager.c GamePresetManager — profiles, scenes, no-stacking activation (Prof_*)
+ *   settings/settings_store.h  SettingsStore pure INI core (tested on host)
+ *   settings/settings_store.c  file IO, BOM handling, atomic writes, migration (PxSet_*)
+ *   windows/window_state.h     WindowManager focus machine (pure; coalesced reassert)
+ *   windows/window_manager.c   hooks, ALT+TAB settle, event forwarding (Wm_*)
+ *   diagnostics/diagnostics.h  event ring log + PxEngineSnapshot
  */
 #ifndef PLEXUSX_COMMON_H
 #define PLEXUSX_COMMON_H
@@ -25,7 +45,7 @@
 
 #define PX_APP_NAME       L"PlexusX"
 #define PX_APP_TITLE      L"PlexusX — Gaming Display Optimizer"
-#define PX_VERSION        L"2.1.0"
+#define PX_VERSION        L"2.2.0"
 #define PX_BUILD_DATE     L"2026-10-01"
 #define PX_CLASS          L"PlexusXMainWnd"
 #define PX_XH_CLASS       L"PlexusXCrosshairWnd"
@@ -42,11 +62,21 @@
 #define WM_APP_TRAY       (WM_APP + 2)   /* tray icon callback */
 #define WM_APP_TOAST      (WM_APP + 3)   /* notification toast */
 #define WM_APP_FOREGROUND (WM_APP + 4)   /* EVENT_SYSTEM_FOREGROUND posted to UI thread */
-#define WM_APP_PIPELINE   (WM_APP + 5)   /* reassert requested look after a display event */
 
 /* ---------------- Color Engine Parameters ---------------- */
-/* The Look struct lives in look.h (Windows-free) so the colour math can be unit-tested. */
-#include "look.h"
+/* The Look struct lives in color/look.h (Windows-free) so the colour math can
+ * be unit-tested on any host.  Nothing else defines `Look`. */
+#include "color/look.h"
+
+/* ---------------- DisplayState: monitors, modes, HDR, color space ---------- */
+#include "display/display_state.h"
+
+/* ---------------- WindowManager focus/reassert machine (pure) -------------- */
+#include "windows/window_state.h"
+
+/* ---------------- Game detection: state machine + live game state ---------- */
+#include "games/game_state.h"
+#include "games/game_display_state.h"
 
 /* ---------------- Per-Game Profile Structure ---------------- */
 #define MAX_SUB_MODES 12
@@ -63,7 +93,7 @@ typedef struct Profile {
     int     is_custom;     /* 1 = user created custom game */
     int     favorite;      /* 1 = favorite game */
     int     sub_count;     /* number of sub-modes */
-    int     active_sub;    /* currently selected sub-mode index */
+    int     active_sub;    /* currently selected sub-mode */
     SubMode sub[MAX_SUB_MODES];
     /* Per-game display preference */
     int     target_res_w;  /* 0 = default / don't change */
@@ -116,46 +146,6 @@ typedef struct XhPreset {
     const wchar_t *name;
     XhCfg cfg;
 } XhPreset;
-
-/* ---------------- Display Mode & Monitor Info ---------------- */
-typedef struct ModeInfo {
-    int w, h, hz;
-    int aspect;            /* 0 = 16:9, 1 = 4:3 stretched, 2 = 16:10, 3 = Ultrawide, 4 = Other */
-    int native;
-    int supported;
-} ModeInfo;
-
-typedef struct MonitorInfo {
-    wchar_t dev_name[32];   /* e.g. \\.\DISPLAY1 */
-    wchar_t friendly[64];   /* e.g. "ASUS ROG PG279QM" or "Generic PnP Monitor" */
-    wchar_t adapter[128];   /* e.g. "NVIDIA GeForce RTX 4080" */
-    RECT    rc;
-    int     is_primary;
-    int     current_w;
-    int     current_h;
-    int     current_hz;
-    int     hdr_enabled;
-    int     hdr_capable;
-    int     bpc;            /* bits per channel: 8, 10 */
-} MonitorInfo;
-
-/* ---------------- GPU & Driver Capability Info ---------------- */
-enum {
-    GPU_VENDOR_UNKNOWN = 0,
-    GPU_VENDOR_NVIDIA,
-    GPU_VENDOR_AMD,
-    GPU_VENDOR_INTEL
-};
-
-typedef struct GpuInfo {
-    int     vendor;         /* GPU_VENDOR_* */
-    wchar_t vendor_name[32];/* "NVIDIA", "AMD", "Intel", "Generic" */
-    wchar_t name[128];      /* e.g. "NVIDIA GeForce RTX 4090" */
-    wchar_t driver_ver[64]; /* Driver version */
-    int     mag_available;  /* Windows Magnification API supported */
-    int     gamma_available;/* GDI SetDeviceGammaRamp supported */
-    int     hdr_detected;   /* OS HDR API available */
-} GpuInfo;
 
 /* ---------------- UI Navigation Tabs ---------------- */
 enum {
@@ -277,7 +267,13 @@ enum {
     ID_B_MONITOR_TARGET_ALL,
     ID_B_MONITOR_TARGET_SEL,
 
-    /* Diagnostics Tests */
+    /* Status chips (GameStatus / DisplayStatus / engine truth) */
+    ID_CHIP_ENGINE = 65,
+    ID_CHIP_DESKTOP,
+    ID_CHIP_GAME,
+    ID_CHIP_MODE,
+
+    /* Diagnostics */
     ID_B_DIAG_DISP_TEST,
     ID_B_DIAG_COLOR_TEST,
     ID_B_DIAG_HDR_TEST,
@@ -354,61 +350,31 @@ typedef struct Widget {
     wchar_t val[48];
     wchar_t sub[64];
     int     state;      /* toggle active / card selected */
-    int     flags;      /* custom data / index */
+    int     flags;      /* custom data / index; for WT_CHIP: semantic color id */
 } Widget;
 
 #define MAX_WIDGETS 320
 
-/* ---------------- Module Interfaces ---------------- */
+/* Chip semantic colors (Widget.flags for WT_CHIP) */
+enum {
+    PX_CHIP_NEUTRAL = 0,
+    PX_CHIP_OK,          /* success green  */
+    PX_CHIP_WARN,        /* warning amber  */
+    PX_CHIP_BAD,         /* danger red     */
+    PX_CHIP_INFO         /* cyan           */
+};
 
-/* Engine (engine.c) */
-void        Eng_Init(void);
-void        Eng_Shutdown(void);
-void        Eng_SetPaths(const wchar_t *ramps, const wchar_t *dirty, int was_dirty);
-void        Eng_Apply(const Look *lk);
-void        Eng_Reset(void);       /* forced: identity matrix + original gamma ramps (crash / emergency safe) */
-void        Eng_Resync(void);      /* forget cached hardware state so the next Eng_Apply() re-asserts it */
-void        Eng_Invalidate(const wchar_t *reason); /* Resync + remember why; does NOT touch requested look */
-void        Eng_Reassert(void);    /* apply the stored requested look after a pipeline invalidation */
-const Look *Eng_GetRequested(void);
-const Look *Eng_GetApplied(void);
-int         Eng_RequestedMatchesApplied(void);
-const wchar_t *Eng_LastInvalidateReason(void);
-int         Eng_Available(void);
-void        Eng_SetTargetMonitor(int idx); /* -1 = all, 0.. = specific display */
-int         Eng_GetTargetMonitor(void);
-const GpuInfo *Eng_GetGpuInfo(void);
-void        Eng_BackupCurrentState(void);
-int         Eng_RestoreLastGood(void);
-void        Eng_KelvinToRgb(float k, float *r, float *g, float *b);
-void        Eng_CalculateGammaRamp(const Look *lk, WORD ramp[3][256]);
+/* ---------------- Module interfaces ----------------
+ * Eng_* -> color/color_engine.h (ColorEngine orchestrator)
+ * Dm_ / Modes_ -> display manager (below)
+ * PxDetect_* -> games/game_detector.h
+ * Wm_*  -> windows/window_manager.h
+ * PxSet_* -> settings store glue (below)
+ * PxPipe_* -> color/color_pipeline.h
+ * Eng_* declarations are pulled in via the module headers included at the
+ * bottom so there is exactly ONE authoritative declaration per function. */
 
-/* Profiles & Games (profiles.c) */
-int         Prof_Init(void);
-int         Prof_Save(void);
-int         Prof_Count(void);
-Profile    *Prof_Get(int i);
-int         Prof_ActiveIndex(void);
-void        Prof_SetActiveIndex(int i);
-int         Prof_SelectSubMode(int game_idx, int sub_idx);
-int         Prof_FindExe(const wchar_t *exe);
-int         Prof_Poll(void);        /* 1 if the active look changed (game in/out) */
-void        Prof_TickPending(void); /* fire a delayed profile apply without sleeping the UI thread */
-void        Prof_SetDetect(int on);
-int         Prof_Detect(void);
-int         Prof_AddCustom(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk);
-int         Prof_Delete(int i);
-int         Prof_ToggleFavorite(int i);
-const wchar_t *Prof_CurrentForeground(void);
-const SceneDef *Scene_GetList(int *count);
-int         Prof_ExportJson(const Profile *p, const wchar_t *filepath);
-int         Prof_ImportJson(Profile *out, const wchar_t *filepath);
-void        Prof_SetAutoRestore(int on);
-int         Prof_GetAutoRestore(void);
-void        Prof_SetDelayMs(int ms);
-int         Prof_GetDelayMs(void);
-
-/* Display & Modes (modes.c) */
+/* Display & Modes (display/display_manager.c) */
 int         Modes_Refresh(void);
 int         Modes_Count(void);
 ModeInfo   *Modes_Get(int i);
@@ -423,6 +389,57 @@ MonitorInfo *Modes_GetMonitor(int i);
 int         Modes_CurrentMonitorIndex(void);
 void        Modes_SetCurrentMonitor(int idx);
 void        Modes_IdentifyMonitors(void);
+int         Modes_FindMonitorForRect(const RECT *r);
+const GpuInfo *Dm_GpuInfo(void);            /* GPU + capabilities, real DXGI/EnumDevices */
+void        Dm_ReportOutputs(int mag_ok, int ramp_displays); /* pipeline → display state */
+int         Dm_HdrAny(void);                /* any output currently in an HDR space */
+
+/* Profiles & Games (games/game_preset_manager.c) */
+int         Prof_Init(void);
+int         Prof_Save(void);
+int         Prof_Count(void);
+Profile    *Prof_Get(int i);
+int         Prof_ActiveIndex(void);
+void        Prof_SetActiveIndex(int i);
+int         Prof_SelectSubMode(int game_idx, int sub_idx);
+int         Prof_FindExe(const wchar_t *exe);
+int         Prof_Poll(void);        /* slow safety net: 1 if the active look changed */
+void        Prof_TickPending(void); /* fire a delayed profile apply without sleeping the UI thread */
+void        Prof_SetDetect(int on);
+int         Prof_Detect(void);
+int         Prof_AddCustom(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk);
+int         Prof_Delete(int i);
+int         Prof_ToggleFavorite(int i);
+const wchar_t *Prof_CurrentForeground(void);
+const SceneDef *Scene_GetList(int *count);
+int         Prof_ExportJson(const Profile *p, const wchar_t *filepath);
+int         Prof_ImportJson(Profile *out, const wchar_t *filepath);
+void        Prof_SetAutoRestore(int on);
+int         Prof_GetAutoRestore(void);
+void        Prof_SetDelayMs(int ms);
+int         Prof_GetDelayMs(void);
+/* foreground transition entry (called by the WindowManager; game_detector.h types) */
+struct PxDetectedForeground;
+void        Prof_NotifyForeground(const struct PxDetectedForeground *f);
+void        Prof_SyncApplied(const wchar_t *why);
+const struct PxGameDisplayState *Prof_GameState(void);
+
+/* Settings store glue (settings/settings_store.c) — the ONLY file-IO layer. */
+void        PxSet_Init(const wchar_t *appdata);
+int         PxSet_CfgCorrupt(void);
+int         PxSet_ProfCorrupt(void);
+struct PxIni *PxSet_Cfg(void);              /* mutate + auto-dirty */
+struct PxIni *PxSet_Prof(void);
+const struct PxIni *PxSet_CfgRO(void);
+const struct PxIni *PxSet_ProfRO(void);
+void        PxSet_TouchProf(void);
+int         PxSet_Flush(void);
+int         PxSetGetInt(const char *sec, const char *key, int dflt);
+float       PxSetGetFlt(const char *sec, const char *key, float dflt);
+void        PxSetSetInt(const char *sec, const char *key, long v);
+void        PxSetSetFlt(const char *sec, const char *key, double v);
+void        PxSetLoadLook(Look *out);
+void        PxSetStoreLook(const Look *lk);
 
 /* Crosshair Overlay (crosshair.c) */
 void        Xh_Init(void);
@@ -470,8 +487,8 @@ int         Ui_Key(int vk, int ctrl, int shift);
 int         Ui_DoubleClick(int x, int y);
 void        Ui_SetPanel(int side_id);
 int         Ui_Panel(void);
-Look       *Ui_Look(void);
-void        Ui_LoadLook(const Look *lk);
+Look       *Ui_Look(void);        /* pointer INTO ColorState (no second copy) */
+void        Ui_LoadLook(const Look *lk);  /* → Eng_SetLook (sanitised ColorState write) */
 void        Ui_Notify(const wchar_t *msg);
 void        Ui_RebuildPanel(void);
 int         Ui_Exec(int id);
@@ -491,6 +508,8 @@ void        Ui_LoadAppearance(int glass, int bg, int reduce, int anim, int start
 
 /* Main Application Helpers (main.c) */
 void        Main_ApplyAll(void);
+struct PxEngineSnapshot;
+void        Main_FillSnapshot(struct PxEngineSnapshot *s);
 void        Main_Save(void);
 void        Main_ApplyChrome(void);
 void        Main_SetStartup(int on);
@@ -504,5 +523,12 @@ extern wchar_t   g_appdata[MAX_PATH];
 
 static inline int   clampi(int v, int a, int b) { return v < a ? a : (v > b ? b : v); }
 static inline float clampf(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
+
+/* Module headers LAST: their prototypes depend on the shared types above.
+ * Every Eng_ / Wm_ / PxDetect_ / PxIni declaration exists in exactly one file. */
+#include "color/color_engine.h"
+#include "games/game_detector.h"
+#include "windows/window_manager.h"
+#include "settings/settings_store.h"
 
 #endif /* PLEXUSX_COMMON_H */

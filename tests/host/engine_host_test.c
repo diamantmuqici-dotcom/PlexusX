@@ -1,7 +1,8 @@
-/* PlexusX — engine.c host scenario tests
+/* PlexusX — ColorEngine + ColorPipeline host scenario tests
  *
- * Drives the REAL app/src/engine.c (not a copy) against mocked Win32 display / Magnification /
- * file APIs (see shim/windows.h and host_mock.c), and counts what would have hit the hardware:
+ * Drives the REAL app/src/color/color_engine.c + color_pipeline.c (not a copy) against
+ * mocked Win32 display / Magnification / file APIs (see shim/windows.h and host_mock.c),
+ * and counts what would have hit the hardware:
  * SetDeviceGammaRamp calls, MagSetFullscreenColorEffect calls and the matrices they carried.
  *
  *   usage: engine_host_test <scratch-dir>        (normally started through tests/host/run.sh)
@@ -284,6 +285,83 @@ int main(int argc, char **argv)
     CHECK(g_mock_mag_calls == mag_before_resync + 1);        /* DWM re-fed the same matrix */
     CHECK(Eng_GetApplied() && Eng_GetApplied()->vibrance == 250.f);
     CHECK(Eng_RequestedMatchesApplied());
+    Eng_Shutdown();
+
+    /* ---- S16 AppliedColorState is hardware truth, and the log dedupes ---- */
+    scen("S16 applied-state truth: FULL after verified send, one log line per revision");
+    reset_world(2); start(0);
+    {
+        unsigned logs_at_init = (unsigned)Eng_LogRing()->count;
+        lk = neutral(); lk.sat = 180; lk.gamma = 0.9f;
+        Eng_Apply(&lk);
+        const AppliedColorState *ap = Eng_Applied();
+        CHECK(ap && ap->have);
+        CHECK(ap->outcome == PX_APPLY_FULL);
+        CHECK(ap->matrix_ok && ap->matrix_verified && !ap->matrix_skipped);
+        CHECK(ap->ramps_ok && ap->ramp_writes == 2);
+        CHECK(ap->note[0] == 0);
+        CHECK(Eng_RequestedMatchesApplied());
+        unsigned logs_after = (unsigned)Eng_LogRing()->count;
+        CHECK(logs_after >= logs_at_init + 1);
+        Eng_ApplyNow(); Eng_ApplyNow();                       /* same revision + outcome: no re-log */
+        CHECK((unsigned)Eng_LogRing()->count == logs_after);
+        PxEngineSnapshot snap; PxSnap_Init(&snap);
+        Eng_FillSnapshot(&snap);
+        CHECK(snap.engine_ready && snap.engine_enabled);
+        CHECK(snap.requested_revision == ap->revision);
+        CHECK(snap.desktop_output == 1);                        /* readback verified */
+        CHECK(snap.ramp_paths == 2 && snap.mag_available == 1);
+        CHECK(snap.log_count >= 1);
+        CHECK(snap.game.detected == 0);
+    }
+    Eng_Shutdown();
+
+    /* ---- S17 readback proves a DWM drop -> PARTIAL, re-assert recovers to FULL ---- */
+    scen("S17 readback mismatch (ALT+TAB drop): PARTIAL + note, never a silent FULL");
+    reset_world(2); start(0);
+    lk = neutral(); lk.vibrance = 250;
+    Eng_Apply(&lk);
+    CHECK(Eng_Applied()->outcome == PX_APPLY_FULL && Eng_RequestedMatchesApplied());
+    g_mock_mag_readback_drift = 1;
+    Eng_Invalidate(L"alt-tab-drop");
+    Eng_ApplyNow();                                             /* DWM "accepts" but does not hold */
+    CHECK(Eng_Applied()->outcome == PX_APPLY_PARTIAL);
+    CHECK(!strcmp(Eng_Applied()->note, "readback mismatch: DWM dropped the effect"));
+    CHECK(!Eng_RequestedMatchesApplied());                      /* UI must show RE-ASSERTING */
+    CHECK(Eng_GetRequested()->vibrance == 250.f);               /* user's value NEVER rewritten */
+    g_mock_mag_readback_drift = 0;                              /* recomposition finished */
+    Eng_Reassert();
+    CHECK(Eng_Applied()->outcome == PX_APPLY_FULL && Eng_RequestedMatchesApplied());
+    Eng_Shutdown();
+
+    /* ---- S18 OS without the readback API: honest FULL-but-unverified, no false alarm ---- */
+    scen("S18 no MagGetFullscreenColorEffect: FULL, matrix_verified = 0 (unverified, not failed)");
+    reset_world(2); g_mock_mag_noreadback = 1; start(0);
+    lk = neutral(); lk.con = 120; Eng_Apply(&lk);
+    CHECK(Eng_Applied()->outcome == PX_APPLY_FULL);
+    CHECK(Eng_Applied()->matrix_ok && !Eng_Applied()->matrix_verified);
+    g_mock_mag_noreadback = 0;
+    Eng_Shutdown();
+
+    /* ---- S19 hard DWM failure + mode bookkeeping + capability report ---- */
+    scen("S19 MagSet failure: PARTIAL (ramps still ok); Eng_SetMode + Dm_ReportOutputs wired");
+    reset_world(2); start(0);
+    CHECK(g_mock_dm_report_calls >= 1 && g_mock_dm_report_mag == 1 && g_mock_dm_report_ramps == 2);
+    Eng_SetMode(PX_CSMODE_GAME, 4, 2);
+    CHECK(Eng_State()->mode == PX_CSMODE_GAME && Eng_State()->game_index == 4 && Eng_State()->game_sub == 2);
+    unsigned rev0 = Eng_State()->revision;
+    Eng_SetMode(PX_CSMODE_GLOBAL, -1, 0);
+    CHECK(Eng_State()->revision == rev0 + 1);
+    Eng_SetMode(PX_CSMODE_GLOBAL, -1, 0);                       /* no change: no bump */
+    CHECK(Eng_State()->revision == rev0 + 1);
+    g_mock_mag_set_fail = 1;
+    Eng_Invalidate(L"inject");
+    lk = neutral(); lk.bri = 150; Eng_Apply(&lk);
+    CHECK(Eng_Applied()->outcome == PX_APPLY_PARTIAL);          /* ramps ok, matrix failed */
+    CHECK(!Eng_RequestedMatchesApplied());
+    g_mock_mag_set_fail = 0;
+    Eng_Reassert();
+    CHECK(Eng_Applied()->outcome == PX_APPLY_FULL);
     Eng_Shutdown();
 
     printf("ENGINE HOST SCENARIOS PASSED: %d scenarios, %d checks\n", g_scen, g_checks);

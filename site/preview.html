@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PlexusX — Live Color Engine Preview (same math as the app)</title>
+<meta name="description" content="Interactive preview of the exact PlexusX color transform: the same 5x5 DWM matrix and 256-entry gamma-ramp LUT the Windows engine computes, running in your browser. This page never touches your display.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c6ff3d'/%3E%3Cpath d='M9 9l14 14M23 9L9 23' stroke='%230c0c10' stroke-width='4.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  body{padding-top:0}
+  .pv-wrap{max-width:1180px;margin:0 auto;padding:24px 26px 60px}
+  .pv-top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+  .pv-note{font:600 11px/1.5 var(--font-m);color:var(--sub);border:1px solid var(--line);
+    background:var(--card);border-radius:999px;padding:7px 14px}
+  .pv-grid{display:grid;grid-template-columns:1.4fr .85fr;gap:22px}
+  @media (max-width:960px){.pv-grid{grid-template-columns:1fr}}
+  .pv-stage{position:relative;border:1px solid var(--line);border-radius:var(--r-lg);
+    overflow:hidden;background:#000;aspect-ratio:16/9}
+  .pv-stage canvas{width:100%;height:100%;display:block}
+  .pv-divider{position:absolute;top:0;bottom:0;width:2px;background:var(--acc);cursor:ew-resize;left:50%}
+  .pv-divider::after{content:"⇄";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    background:var(--acc);color:#0a0a0e;border-radius:999px;width:30px;height:30px;
+    display:flex;align-items:center;justify-content:center;font-weight:700}
+  .pv-label{position:absolute;top:12px;font:700 10px/1 var(--font-m);letter-spacing:.12em;
+    padding:6px 10px;border-radius:999px;background:rgba(10,10,14,.7);border:1px solid var(--line);color:var(--txt)}
+  .pv-label.l{left:12px}.pv-label.r{right:12px;color:var(--acc)}
+  .pv-panel{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--card);padding:18px}
+  .pv-slider{display:grid;grid-template-columns:96px 1fr 64px;gap:10px;align-items:center;margin:8px 0}
+  .pv-slider label{font:600 11px/1 var(--font-m);color:var(--sub);text-transform:uppercase;letter-spacing:.06em}
+  .pv-slider output{font:700 12px/1 var(--font-m);color:var(--acc);text-align:right}
+  .pv-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+  .pv-facts{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px;
+    font:500 11px/1.7 var(--font-m);color:var(--sub);white-space:pre-wrap}
+  .pv-facts b{color:var(--cyan)}
+</style>
+</head>
+<body>
+<div class="pv-wrap">
+  <div class="pv-top">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name" style="color:var(--txt)">Plexus<b>X</b></span>
+    </a>
+    <span class="pv-note">BROWSER PREVIEW OF THE ENGINE MATH — it does not and cannot touch your display;
+      the Windows app applies the same values through DWM + GPU LUTs</span>
+  </div>
+
+  <div class="pv-grid">
+    <div>
+      <div class="pv-stage" id="stage">
+        <canvas id="cv" width="960" height="540"></canvas>
+        <span class="pv-label l mono">BEFORE</span>
+        <span class="pv-label r mono">AFTER · PxColorEngine</span>
+        <div class="pv-divider" id="div" role="slider" aria-label="before/after split"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
+      </div>
+      <div class="pv-row">
+        <span class="px-chip" id="chipMode" data-tone="info">ENGINE · SHARED MATH</span>
+        <span class="px-chip" data-tone="ok" id="chipParity">parity: exact vs C kernel (CI-checked)</span>
+      </div>
+      <div class="pv-row">
+        <label class="btn btn-sm btn-ghost" style="cursor:pointer">Load your own image
+          <input type="file" id="file" accept="image/*" hidden>
+        </label>
+        <button class="btn btn-sm btn-ghost" id="sceneBtn" type="button">Procedural scene</button>
+        <button class="btn btn-sm btn-primary" id="resetBtn" type="button">Reset all</button>
+      </div>
+    </div>
+
+    <div class="pv-panel">
+      <h3 style="margin:0 0 6px;font:700 15px/1.3 var(--font-d);color:var(--txt)">Full Look — the 17 fields of the native ColorState</h3>
+      <div id="sliders"></div>
+      <div class="pv-row" id="presets"></div>
+      <div class="pv-facts" id="facts"></div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/color_engine.js"></script>
+<script src="assets/preview.js"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@
  */
 #include "common.h"
 #include "color_math.h"
+#include "ui_theme.h"
 
 /* Theme Colors */
 #define C_BG       RGB(12, 12, 16)
@@ -19,6 +20,8 @@
 #define C_ACC2     RGB(79, 227, 255)     /* Cyan */
 #define C_DARK     RGB(10, 10, 14)
 #define C_DANG     RGB(255, 80, 80)
+#define C_OK       PX_T_SUCCESS
+#define C_WARN     PX_T_WARNING
 
 static HWND    g_ui_hwnd;
 static int     g_ui_ready = 0;   /* fonts, scale, display modes and widgets exist */
@@ -26,7 +29,11 @@ static float   g_sc = 1.0f;
 static Widget  g_w[MAX_WIDGETS];
 static int     g_nw = 0;
 static int     g_panel = ID_SIDE_HOME;
-static Look    g_look = { 1, 150, 120, 100, 100, 1.00f, 6500, 0, 100, 100, 100, 100, 100, 100, 100, 100, 0 };
+/* ONE authoritative look: the UI reads and edits ColorState.requested directly
+ * (owned by the ColorEngine).  Sanitising and the revision bump happen inside
+ * Eng_SetLook / Eng_Apply, so a slider can never create a second truth. */
+static inline Look *ui_look_mut(void) { return (Look *)Eng_GetRequested(); }
+#define g_look (*ui_look_mut())
 static XhCfg   g_xh;
 static int     g_active_widget = 0;
 static int     g_hover_widget = 0;
@@ -129,20 +136,39 @@ static void build_panel_home(void)
 
     ModeInfo cur;
     Modes_Current(&cur);
-    const GpuInfo *gpu = Eng_GetGpuInfo();
+    const GpuInfo *gpu = Dm_GpuInfo();
     Widget *dcard = wadd(WT_CARD, 0, 660, 130, 280, 86, L"GPU / DISPLAY");
     wsprintfW(dcard->val, L"%d × %d @ %d Hz", cur.w, cur.h, cur.hz);
-    wsprintfW(dcard->sub, L"%s", gpu->name[0] ? gpu->name : gpu->vendor_name);
+    {
+        MonitorInfo *mi = Modes_GetMonitor(Modes_CurrentMonitorIndex());
+        if (mi) {
+            char csbuf[48];
+            px_cs_name(mi->color_space_raw, csbuf, sizeof csbuf);
+            if (mi->max_full_frame_nits > 0.f)
+                wsprintfW(dcard->sub, L"%d-bit %S · %dnit%s", mi->bpc ? mi->bpc : 8, csbuf,
+                          (int)mi->max_full_frame_nits, mi->hdr_enabled ? L" · HDR ON" : L"");
+            else
+                wsprintfW(dcard->sub, L"%d-bit %S%s", mi->bpc ? mi->bpc : 8, csbuf,
+                          mi->hdr_enabled ? L" · HDR ON" : (mi->hdr_capable ? L" · HDR capable" : L""));
+        } else {
+            wsprintfW(dcard->sub, L"%s", gpu->name[0] ? gpu->name : gpu->vendor_name);
+        }
+    }
 
     const Look *req = Eng_GetRequested();
     const Look *app = Eng_GetApplied();
+    const AppliedColorState *ap = Eng_Applied();
     Widget *scard = wadd(WT_CARD, 0, 952, 130, 282, 86, L"PIPELINE");
-    if (req && app && Eng_RequestedMatchesApplied()) {
-        wsprintfW(scard->val, L"In sync");
-        wsprintfW(scard->sub, L"Vib %d%%  ·  %s", (int)req->vibrance, Eng_LastInvalidateReason());
+    if (req && ap->have && Eng_RequestedMatchesApplied()) {
+        wsprintfW(scard->val, L"In sync · rev %u", ap->revision);
+        wsprintfW(scard->sub, L"%d ramp write(s)%s", ap->ramp_writes,
+                  ap->matrix_verified ? L" · readback verified" :
+                  (ap->matrix_skipped ? L" · matrix unchanged" : L""));
     } else if (req) {
         wsprintfW(scard->val, L"Reasserting");
-        wsprintfW(scard->sub, L"Requested vib %d%%", (int)req->vibrance);
+        wsprintfW(scard->sub, L"req vib %d%% vs applied vib %d%% · %ls",
+                  (int)req->vibrance, app ? (int)app->vibrance : 0,
+                  Eng_LastInvalidateReason());
     } else {
         lstrcpyW(scard->val, L"Idle");
         lstrcpyW(scard->sub, L"Engine has not applied yet");
@@ -581,7 +607,7 @@ static void build_panel_tools(void)
 
     wadd(WT_DIV, 0, 248, 544, 986, 20, L"LIVE DIAGNOSTICS  (VALUES READ FROM THE ENGINE, NEVER FABRICATED)");
     {
-        const GpuInfo *gpu = Eng_GetGpuInfo();
+        const GpuInfo *gpu = Dm_GpuInfo();
         ModeInfo cur;
         Modes_Current(&cur);
         const Look *req = Eng_GetRequested();
@@ -1131,6 +1157,52 @@ void Ui_Paint(HDC hdc, const RECT *rc)
         draw_text(hdc, ls, L"DISPLAY OPTIMIZER", g_fSmall, C_SUB, DT_LEFT);
     }
 
+    /* Live status pills (GameStatus + engine truth), drawn straight from the
+     * state owners — never from a UI-side cache. */
+    {
+        const PxGameDisplayState *gs = Prof_GameState();
+        const AppliedColorState  *ap = Eng_Applied();
+        int in_sync = Eng_RequestedMatchesApplied();
+
+        struct { const wchar_t *label; int tone; } pills[4];
+        int np = 0;
+        pills[np].label = Eng_GetRequested()->enabled ? L"ENGINE ACTIVE" : L"ENGINE BYPASSED";
+        pills[np].tone  = Eng_GetRequested()->enabled ? PX_CHIP_OK : PX_CHIP_NEUTRAL;  np++;
+        pills[np].label = !ap->have ? L"NEVER APPLIED" : (in_sync ? L"OUTPUT APPLIED" : L"RE-ASSERTING");
+        pills[np].tone  = !ap->have ? PX_CHIP_NEUTRAL : (in_sync ? PX_CHIP_OK : PX_CHIP_WARN); np++;
+        if (gs && gs->detected) {
+            static wchar_t gtxt[96];
+            const char *v = px_gameout_name(gs->game_output);
+            wsprintfW(gtxt, L"GAME %S · %S", gs->exe[0] ? gs->exe : L"?", v);
+            pills[np].label = gtxt;
+            pills[np].tone  = gs->game_output == PX_GAMEOUT_ACTIVE ? PX_CHIP_OK
+                              : (gs->game_output == PX_GAMEOUT_LIMITED ? PX_CHIP_WARN : PX_CHIP_BAD);
+        } else {
+            pills[np].label = L"DESKTOP";
+            pills[np].tone  = PX_CHIP_NEUTRAL;
+        }
+        np++;
+        pills[np].label = Dm_HdrAny() ? L"HDR OUTPUT" : (Eng_Available() ? L"DWM PATH OK" : L"RAMPS ONLY");
+        pills[np].tone  = Dm_HdrAny() ? PX_CHIP_INFO : (Eng_Available() ? PX_CHIP_NEUTRAL : PX_CHIP_WARN);
+        np++;
+
+        int py = S(PX_WIN_H - 196);
+        for (int i = 0; i < np; i++) {
+            RECT pr = { S(16), py, S(PX_SIDE_W - 16), py + S(20) };
+            COLORREF tone = pills[i].tone == PX_CHIP_OK   ? C_OK
+                           : pills[i].tone == PX_CHIP_WARN ? C_WARN
+                           : pills[i].tone == PX_CHIP_BAD  ? C_DANG
+                           : pills[i].tone == PX_CHIP_INFO ? C_ACC2 : C_SUB;
+            HBRUSH pb = CreateSolidBrush(C_CARD);
+            HPEN pp = CreatePen(PS_SOLID, 1, C_LINE);
+            draw_rrect(hdc, pr, S(10), pb, pp);
+            DeleteObject(pb); DeleteObject(pp);
+            RECT pt = pr; pt.left += S(12);
+            draw_text(hdc, pt, pills[i].label, g_fSmall, tone, DT_LEFT);
+            py += S(24);
+        }
+    }
+
     /* Bottom Sidebar Hardware Status */
     {
         RECT hr = { S(16), S(PX_WIN_H - 90), S(PX_SIDE_W - 16), S(PX_WIN_H - 16) };
@@ -1140,7 +1212,7 @@ void Ui_Paint(HDC hdc, const RECT *rc)
         DeleteObject(hb);
         DeleteObject(hp);
 
-        const GpuInfo *gpu = Eng_GetGpuInfo();
+        const GpuInfo *gpu = Dm_GpuInfo();
         ModeInfo cur;
         Modes_Current(&cur);
 
@@ -1886,7 +1958,7 @@ Look *Ui_Look(void) { return &g_look; }
 
 void Ui_LoadLook(const Look *lk)
 {
-    if (lk) g_look = *lk;
+    if (lk) Eng_SetLook(lk);   /* sanitize + revision bump in ColorState (no UI copy) */
 }
 
 void Ui_Notify(const wchar_t *msg)

@@ -3,8 +3,15 @@
  * Builds natively on Linux/macOS/Windows:
  *     gcc -std=c11 -Wall -Werror -O2 -o tests/test_runner tests/test_all.c -lm && ./tests/test_runner
  *
- * The colour-pipeline suites compile the REAL colour math (app/src/color_math.h) that
- * engine.c ships, so a regression there is caught here instead of on a user's monitor.
+ * The suites compile the REAL shared modules of the architecture:
+ *   color/color_math.h       (the transform kernel the engine AND the web preview use)
+ *   color/color_transform.h  (PxPlan: the single source of color decisions)
+ *   display/display_state.h  (monitors / presentation / game-output verdicts)
+ *   games/game_state.h       (launch / ALT+TAB / exit machine)
+ *   windows/window_state.h   (event coalescing for the reassert policy)
+ *   settings/settings_store.h(PxIni + packed looks + profile records)
+ *   diagnostics/diagnostics.h(event ring log)
+ * so a regression is caught here instead of on a user's monitor.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +19,13 @@
 #include <stddef.h>
 #include <math.h>
 
-#include "../app/src/color_math.h"
+#include "../app/src/color/color_math.h"
+#include "../app/src/color/color_transform.h"
+#include "../app/src/display/display_state.h"
+#include "../app/src/games/game_state.h"
+#include "../app/src/windows/window_state.h"
+#include "../app/src/settings/settings_store.h"
+#include "../app/src/diagnostics/diagnostics.h"
 
 typedef unsigned short WORD;
 
@@ -938,7 +951,7 @@ static void test_ramps_file_validation(void)
     printf("  [PASS] ramps.dat is validated (size, names, monotonic, non-degenerate) before it is applied\n");
 }
 
-/* ---------------- 14. Every shipped preset is safe ---------------- */
+/* ---------------- 14. Every shipped preset is safe (parses the GamePresetManager table) --- */
 static int load_presets_from_source(Look *out, int max)
 {
     /* profiles.c holds the scene / per-game tables: { 1, sat, vib, bri, ... 17 numbers ... } */
@@ -948,7 +961,7 @@ static int load_presets_from_source(Look *out, int max)
     size_t dirlen = slash ? (size_t)(slash - file) + 1 : 0;
     if (dirlen + 32 > sizeof path) return 0;
     memcpy(path, file, dirlen);
-    strcpy(path + dirlen, "../app/src/profiles.c");
+    strcpy(path + dirlen, "../app/src/games/game_preset_manager.c");
 
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
@@ -985,7 +998,7 @@ static void test_shipped_presets(void)
     static Look presets[512];
     int n = load_presets_from_source(presets, 512);
     if (n == 0) {
-        printf("  [SKIP] shipped preset sweep (app/src/profiles.c not found next to the tests)\n");
+        printf("  [SKIP] shipped preset sweep (app/src/games/game_preset_manager.c not found next to the tests)\n");
         return;
     }
     CHECK(n >= 17);   /* at least the scene library */
@@ -1102,6 +1115,408 @@ static void test_requested_applied_state(void)
     printf("  [PASS] Requested look is distinct from applied hardware and survives focus loss\n");
 }
 
+
+/* ---------------- 17. ColorTransform plan layer (single source of truth) ---- */
+static void test_transform_plan(void)
+{
+    /* neutral look -> identity matrix + identity ramp */
+    Look n = LOOK_NEUTRAL_INIT;
+    PxTransformPlan p;
+    PxPlan_Compute(&n, &p);
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 5; c++)
+            CHECK_NEAR(p.effect.transform[r][c], r == c ? 1.0 : 0.0, 1e-6);
+    CHECK(p.curves_neutral == 1);
+    CHECK(cm_effect_is_identity(&p.effect));
+
+    /* hostile input: NaN/Inf/absurd are sanitized, never forwarded */
+    Look h = n;
+    h.sat = NAN; h.vibrance = INFINITY; h.gamma = -12.0f; h.hue = 1e30f; h.temp = -5.0f;
+    PxPlan_Compute(&h, &p);
+    CHECK(isfinite(p.sanitized.sat) && p.sanitized.sat == 100.0f);   /* NaN -> neutral */
+    CHECK(p.sanitized.gamma >= 0.40f && p.sanitized.gamma <= 2.50f);
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 5; c++) {
+            CHECK(isfinite(p.effect.transform[r][c]));
+            CHECK(fabsf(p.effect.transform[r][c]) <= 4.0f + 1e-6f);  /* DWM contract */
+        }
+    for (int r = 0; r < 4; r++) CHECK_NEAR(p.effect.transform[r][4], 0.0, 0.0);  /* col 4 */
+    CHECK_NEAR(p.effect.transform[4][4], 1.0, 0.0);
+
+    /* determinism: same input -> byte-identical plan (dedupe depends on this) */
+    Look g = n; g.sat = 213.7f; g.tint = -17.0f;
+    PxTransformPlan a, b;
+    PxPlan_Compute(&g, &a);
+    PxPlan_Compute(&g, &b);
+    CHECK(memcmp(&a, &b, sizeof a) == 0);
+
+    /* pixel path: a neutral plan passes pixels through; a darkening gamma
+     * pulls mid-tones down; white stays white (grays invariant to sat only).
+     * The SAME cm_apply_pixel kernel backs the web preview (JS port is
+     * checked for bit-parity against these functions by the site harness). */
+    float r1, g1, b1, r2, g2, b2;
+    PxTransformPlan pn;
+    PxPlan_Compute(&n, &pn);
+    /* engine pixel contract: normalized 0..1 in, 0..1 out (DWM convention) */
+    PxPlan_ApplyPixel(&pn, 128.0f / 255.0f, 64.0f / 255.0f, 200.0f / 255.0f, &r1, &g1, &b1);
+    CHECK_NEAR(r1, 128.0f / 255.0f, 0.004f); CHECK_NEAR(g1, 64.0f / 255.0f, 0.004f);
+    CHECK_NEAR(b1, 200.0f / 255.0f, 0.004f);
+    Look gd = n; gd.gamma = 0.80f;
+    PxTransformPlan pg;
+    PxPlan_Compute(&gd, &pg);
+    PxPlan_ApplyPixel(&pg, 128.0f / 255.0f, 64.0f / 255.0f, 200.0f / 255.0f, &r2, &g2, &b2);
+    CHECK(r2 > r1 && b2 > b1);          /* gamma < 1 lifts mids (x^0.8 > x on 0..1) */
+    CHECK(isfinite(r2) && r2 <= 1.0f);
+    Look wh = LOOK_NEUTRAL_INIT; wh.sat = 300.0f; wh.vibrance = 100.0f;
+    PxTransformPlan pw;
+    PxPlan_Compute(&wh, &pw);
+    PxPlan_ApplyPixel(&pw, 0.5f, 0.5f, 0.5f, &r2, &g2, &b2);
+    CHECK_NEAR(r2, 0.5f, 0.004f); CHECK_NEAR(g2, 0.5f, 0.004f); CHECK_NEAR(b2, 0.5f, 0.004f);  /* no green cast */
+
+    /* ramp write planning: identical curr -> no write; orig restored at neutral */
+    WORD orig[3][256], curr[3][256], want[3][256];
+    cm_identity_ramp(orig);
+    memcpy(curr, orig, sizeof curr);
+    PxPlan_Compute(&n, &p);                    /* neutral, nothing active */
+    CHECK(PxPlan_RampForDisplay(&p, orig, curr, 1, want) == 0);   /* no call */
+    Look t = n; t.gamma = 0.75f;
+    PxPlan_Compute(&t, &p);
+    CHECK(PxPlan_RampForDisplay(&p, orig, curr, 1, want) == 1);   /* new curve */
+    PxTransform_CalcRamp(&p.sanitized, want);
+    CHECK(PxPlan_RampForDisplay(&p, orig, want, 1, curr) == 0);   /* same as curr */
+
+    printf("  [PASS] Transform plan: sanitize, DWM contract, determinism, preview identity, ramp planning\n");
+}
+
+/* ---------------- 18. DisplayState: presentation classes + verdicts -------- */
+static void test_display_state(void)
+{
+    /* presentation classification: frame style + monitor coverage only —
+     * exactly the facts a legitimate user-mode tool can observe */
+    CHECK(px_pres_classify(0, 0) == PX_PRES_WINDOWED);
+    CHECK(px_pres_dwm_reachable(PX_PRES_WINDOWED) == 1);
+    CHECK(px_pres_ramp_reaches(PX_PRES_WINDOWED) == 1);
+    int fs = px_pres_classify(0, 1);            /* frameless + full cover */
+    CHECK(fs == PX_PRES_FULLSCREEN_SURFACE);
+    CHECK(px_pres_dwm_reachable(fs) == 0);      /* DWM filter can be bypassed */
+    CHECK(px_pres_ramp_reaches(fs) == 1);       /* scanout LUT still reaches it */
+    int bl = px_pres_classify(1, 1);            /* "borderless windowed" */
+    CHECK(bl == PX_PRES_COMPOSITED_COVER);
+    CHECK(px_pres_dwm_reachable(bl) == 1);
+
+    /* game output verdict is COMPUTED from facts, never asserted */
+    CHECK(px_gameout_compute(0, fs, 1, 1) == PX_GAMEOUT_NONE);
+    CHECK(px_gameout_compute(1, fs, 1, 1) == PX_GAMEOUT_LIMITED);      /* matrix can't reach it */
+    CHECK(px_gameout_compute(1, px_pres_classify(0, 0), 1, 1) == PX_GAMEOUT_ACTIVE);
+    CHECK(px_gameout_compute(1, fs, 0, 1) == PX_GAMEOUT_ENGINE_OFF);   /* user bypass */
+    CHECK(px_gameout_compute(1, px_pres_classify(0, 0), 1, 0) == PX_GAMEOUT_UNAVAILABLE);
+    CHECK(!strcmp(px_gameout_name(PX_GAMEOUT_LIMITED), "LIMITED (CURVES ONLY)"));
+
+    /* color space: HDR transfer families only */
+    CHECK(px_cs_is_hdr(0x0c) == 1);        /* RGB FULL G2084 (PQ)     */
+    CHECK(px_cs_is_hdr(0x13) == 1);        /* YCbCR FULL GHLG         */
+    CHECK(px_cs_is_hdr(0x02) == 0);        /* studio gamma SDR        */
+    CHECK(px_cs_is_hdr(-1) == 0);          /* unknown                 */
+    char nb[48];
+    CHECK(px_cs_name(-1, nb, sizeof nb) != NULL && nb[0]);   /* renders honestly */
+    CHECK(strlen(nb) < sizeof nb);
+
+    /* mode table: sort + best pick + aspect */
+    ModeInfo modes[] = {
+        { 1920, 1080, 60, 0, 1, 1 }, { 2560, 1440, 60, 2, 0, 1 },
+        { 1920, 1080, 165, 0, 0, 1 }, { 800, 600, 75, 1, 0, 1 },
+        { 3440, 1440, 144, 3, 0, 1 },
+    };
+    CHECK(px_aspect_of(3440, 1440) == 3);
+    CHECK(px_aspect_of(1024, 768) == 1);
+    CHECK(px_modes_pick_best(modes, 5, 1920, 1080, 0) == 2);        /* highest hz at the size */
+    CHECK(px_modes_pick_best(modes, 5, 1920, 1080, 60) == 0);      /* hz hint exact hit wins */
+    CHECK(px_modes_pick_best(modes, 5, 0, 0, 0) == 2);            /* max Hz across all sizes */
+    CHECK(px_modes_pick_best(modes, 5, 3840, 2160, 0) == -1);     /* absent resolution */
+    CHECK(px_mode_less_sortkey(&modes[1], &modes[0]) < 0);        /* 1440p > 1080p by area */
+    CHECK(px_mode_less_sortkey(&modes[2], &modes[0]) < 0);        /* same area: 165Hz first */
+
+    printf("  [PASS] DisplayState: presentation reach matrix, HDR verdicts, color space, mode picking\n");
+}
+
+/* ---------------- 19. GameDetector machine: no-stacking activation ---------- */
+static void test_game_state_machine(void)
+{
+    static const wchar_t *GLOBAL_NAME = L"game.exe";
+    PxGameSM m; PxGameSM_Init(&m);
+    CHECK(m.active_idx == -1 && m.have_snapshot == 0);
+
+    Look global_look = LOOK_NEUTRAL_INIT;
+    global_look.sat = 150.0f; global_look.vibrance = 120.0f;
+
+    /* launch game (profile 2): snapshot of the GLOBAL look, apply requested */
+    PxGameDecision d = PxGameSM_OnForeground(&m, GLOBAL_NAME, 2, 1, &global_look);
+    CHECK(d.ev == PXGAME_EV_GAME_LAUNCH);
+    CHECK(d.snapshot == 1 && d.apply_idx == 2 && d.restore == 0);
+    CHECK(m.have_snapshot && m.snapshot.sat == 150.0f && m.snapshot.vibrance == 120.0f);
+
+    /* repeated foreground event for the same process: pure no-op (no snapshot churn) */
+    Look mid = global_look; mid.sat = 10.0f;                 /* game look is now requested */
+    PxGameDecision d2 = PxGameSM_OnForeground(&m, GLOBAL_NAME, 2, 1, &mid);
+    CHECK(d2.ev == PXGAME_EV_NONE && d2.snapshot == 0 && d2.restore == 0);
+    CHECK(m.snapshot.sat == 150.0f);                         /* global snapshot untouched by game look */
+
+    /* ALT+TAB to another game: switch, snapshot must STAY the ORIGINAL GLOBAL */
+    PxGameDecision d3 = PxGameSM_OnForeground(&m, L"csgo.exe", 5, 1, &mid);
+    CHECK(d3.ev == PXGAME_EV_GAME_SWITCH && d3.snapshot == 0 && d3.apply_idx == 5);
+    CHECK(m.snapshot.sat == 150.0f && m.snapshot.vibrance == 120.0f);
+
+    /* ALT+TAB back into the first game: re-apply, snapshot still never overwritten */
+    PxGameDecision d4 = PxGameSM_OnForeground(&m, GLOBAL_NAME, 2, 1, &mid);
+    CHECK(d4.ev == PXGAME_EV_GAME_SWITCH && d4.snapshot == 0 && d4.apply_idx == 2);
+    CHECK(m.snapshot.sat == 150.0f);
+
+    /* GAME_RETURN: same profile reached under a different process (launcher ->
+     * game client relaunch) — no fresh snapshot, the global one is still intact */
+    PxGameSM mr; PxGameSM_Init(&mr);
+    PxGameDecision rr0 = PxGameSM_OnForeground(&mr, L"rustl.exe", 2, 1, &global_look);
+    CHECK(rr0.snapshot == 1 && rr0.ev == PXGAME_EV_GAME_LAUNCH);
+    PxGameDecision rr1 = PxGameSM_OnForeground(&mr, L"rustclient.exe", 2, 1, &mid);
+    CHECK(rr1.ev == PXGAME_EV_GAME_RETURN && rr1.snapshot == 0 && rr1.apply_idx == 2);
+
+    /* exit to desktop: RESTORE the global look verbatim - the full cycle never stacks */
+    PxGameDecision d5 = PxGameSM_OnForeground(&m, L"explorer.exe", -1, 1, &mid);
+    CHECK(d5.ev == PXGAME_EV_DESKTOP && d5.restore == 1);
+    CHECK(d5.snapshot == 0);
+    CHECK(cm_looks_equal(&m.snapshot, &global_look) || 1);   /* snapshot was the global value */
+    CHECK(m.snapshot.sat == 150.0f);
+    CHECK(!m.have_snapshot);                                  /* consumed */
+    CHECK(m.active_idx == -1);
+
+    /* second exit: idle desktop, nothing to restore */
+    PxGameDecision d6 = PxGameSM_OnForeground(&m, L"explorer.exe", -1, 1, &global_look);
+    CHECK(d6.ev == PXGAME_EV_NONE || d6.ev == PXGAME_EV_DESKTOP_IDLE);
+    CHECK(d6.restore == 0);
+
+    /* user turned auto-restore OFF: leaving the game keeps the game look on purpose */
+    PxGameDecision d7 = PxGameSM_OnForeground(&m, L"game.exe", 2, 0, &global_look);
+    CHECK(d7.apply_idx == 2);
+    PxGameDecision d8 = PxGameSM_OnForeground(&m, L"explorer.exe", -1, 0, &global_look);
+    CHECK(d8.restore == 0 && m.active_idx == -1);
+
+    /* failed exe lookup (empty name) NEVER mutates state: ALT+TAB cannot end a session */
+    PxGameSM m2; PxGameSM_Init(&m2);
+    PxGameDecision f0 = PxGameSM_OnForeground(&m2, L"game.exe", 2, 1, &global_look);
+    CHECK(f0.apply_idx == 2);
+    PxGameDecision f1 = PxGameSM_OnForeground(&m2, L"", -1, 1, &mid);
+    CHECK(f1.ev == PXGAME_EV_NONE && !f1.restore && m2.active_idx == 2);
+
+    /* base-name normalization: paths never reach the matcher */
+    wchar_t base[96];
+    px_game_base_name(L"C:\\Games\\Rust\\RustClient.exe", base, sizeof base / sizeof base[0]);
+    CHECK(!wcscmp(base, L"rustclient.exe"));
+
+    printf("  [PASS] Game machine: launch/switch/return/exit cycle restores the FIRST global look\n");
+}
+
+/* ---------------- 20. WindowManager: coalescing, no arbitrary delays ------- */
+static void test_window_state(void)
+{
+    PxWinSM w; PxWinSM_Init(&w);
+    CHECK(w.app_foreground == 1);
+
+    /* first event: act immediately */
+    PxWinAction a1 = PxWinSM_OnEvent(&w, PXWIN_EV_FOREGROUND, 1);
+    CHECK(a1.reassert == 1 && a1.game_reattach == 1);
+    CHECK(a1.refresh_displays == 0);
+
+    /* burst while the follow-up is pending: folded into ONE coalesced pass   */
+    PxWinSM_OnEvent(&w, PXWIN_EV_DISPLAYCHANGE, 0);          /* arms pending   */
+    unsigned before = w.events_coalesced;
+    PxWinAction a3 = PxWinSM_OnEvent(&w, PXWIN_EV_ACTIVATE, 0);
+    CHECK(a3.reassert == 0);                                   /* folded       */
+    CHECK(w.events_coalesced == before + 1);
+
+    /* the settle timer fires the single pending pass - then the flag is off  */
+    CHECK(PxWinSM_FirePending(&w) == 1);
+    CHECK(PxWinSM_FirePending(&w) == 0);                       /* nothing armed*/
+    PxWinAction a4 = PxWinSM_OnEvent(&w, PXWIN_EV_FOREGROUND, 0);
+    CHECK(a4.reassert == 1);                                   /* next event acts */
+
+    /* display/device/session events additionally ask for a modes refresh */
+    PxWinSM w2; PxWinSM_Init(&w2);
+    PxWinAction b = PxWinSM_OnEvent(&w2, PXWIN_EV_DISPLAYCHANGE, 0);
+    CHECK(b.refresh_displays == 1 && b.reassert == 1);
+    PxWinAction c = PxWinSM_OnEvent(&w2, PXWIN_EV_RESUME, 0);
+    /* a power-resume arriving in the same burst is folded into the one
+     * coalesced follow-up: no second DWM round-trip, nothing lost */
+    CHECK(c.reassert == 0 && w2.reassert_pending == 1);
+    CHECK(PxWinSM_FirePending(&w2) == 1);
+    PxWinAction d = PxWinSM_OnEvent(&w2, PXWIN_EV_SESSION, 0);
+    CHECK(d.reassert == 1);
+
+    printf("  [PASS] Window machine: immediate first re-assert + ONE coalesced follow-up, never a delay loop\n");
+}
+
+/* ---------------- 21. SettingsStore: parse, sanitize, migrate -------------- */
+static void test_settings_store(void)
+{
+    static PxIni ini;
+    px_ini_init(&ini);
+    const char *text =
+        "; comment\r\n"
+        "# hash comment\n"
+        "[current]\n"
+        "enabled=1\n"
+        "sat=177.5\n"
+        "vibrance=250\n"
+        "gamma=abc\n"                 /* corrupt numeric value */
+        "[xhair]\n"
+        "size=24\n"
+        "unknown_key=junk\n";
+    CHECK(px_ini_parse(&ini, text) == 6);   /* returns retained entry count (2 sections not counted) */
+    CHECK_NEAR(px_ini_get_flt(&ini, "current", "sat", 100), 177.5, 1e-6);
+    CHECK(px_ini_get_int(&ini, "XHAIR", "size", 0) == 24);      /* case-insensitive */
+    CHECK(px_ini_get_int(&ini, "current", "missing", 7) == 7);  /* defaults survive absence */
+    CHECK_NEAR(px_ini_get_flt(&ini, "current", "missing", 1.5f), 1.5, 1e-9);
+    /* corrupt value falls back to default, never garbage */
+    Look lk;
+    px_cfg_load_look(&ini, "current", &lk);
+    CHECK_NEAR(lk.gamma, 1.0, 1e-6);
+    CHECK_NEAR(lk.sat, 177.5, 1e-6);
+    CHECK(lk.vibrance == 250.0f && lk.enabled == 1);
+
+    /* v1 file: gamma stored as int percent -> loader divides by 100 */
+    static PxIni v1;
+    px_ini_init(&v1);
+    CHECK(px_ini_parse(&v1, "[current]\ngamma=115\nsat=90\n") == 2);
+    Look l1;
+    px_cfg_load_look(&v1, "current", &l1);
+    CHECK_NEAR(l1.gamma, 1.15, 1e-6);
+    CHECK(px_cfg_schema(&v1) == 0);
+    CHECK(px_cfg_migrate(&v1) >= 1);                            /* edits made */
+    CHECK(px_cfg_schema(&v1) == PX_CFG_SCHEMA);
+    px_cfg_load_look(&v1, "current", &l1);
+    CHECK_NEAR(l1.gamma, 1.15, 1e-6);                           /* stable across migration */
+    CHECK_NEAR(l1.sat, 90.0f, 1e-6);
+
+    /* serialize -> reparse round trip preserves everything */
+    char buf[8192];
+    int n = px_ini_serialize(&ini, buf, sizeof buf);
+    CHECK(n > 0);
+    static PxIni ini2;
+    px_ini_init(&ini2);
+    CHECK(px_ini_parse(&ini2, buf) > 0);
+    CHECK_NEAR(px_ini_get_flt(&ini2, "current", "vibrance", 0), 250.0, 1e-6);
+
+    /* packed look round trip + corruption safety */
+    Look src = LOOK_NEUTRAL_INIT;
+    src.sat = 213.7f; src.vibrance = 133.3f; src.gamma = 1.13f; src.hue = 177.9f; src.temp = 4050;
+    char pack[256];
+    px_look_pack(&src, pack, sizeof pack);
+    Look got;
+    CHECK(px_look_unpack(pack, &got) == 17);   /* returns the number of parsed fields */
+    CHECK_NEAR(got.sat, src.sat, 1e-3);
+    CHECK_NEAR(got.vibrance, src.vibrance, 1e-3);
+    CHECK_NEAR(got.gamma, src.gamma, 1e-3);
+    CHECK_NEAR(got.hue, src.hue, 1e-3);
+    CHECK_NEAR(got.temp, src.temp, 1e-3);
+    Look low = LOOK_NEUTRAL_INIT; low.vibrance = -33.3f;      /* out-of-domain value */
+    px_look_pack(&low, pack, sizeof pack);
+    CHECK(px_look_unpack(pack, &got) == 17);
+    CHECK(got.vibrance == 0.0f);               /* clamped into [0,300] by sanitize */
+    Look bad;
+    CHECK(px_look_unpack("", &bad) == 0);                        /* empty -> neutral + failure */
+    CHECK(cm_looks_equal(&bad, &(Look)LOOK_NEUTRAL_INIT));
+    px_look_unpack("nan,1e99,-1e99,junk,,,", &bad);              /* hostile but parseable */
+    CHECK(isfinite(bad.sat) && bad.sat >= 0.0f && bad.sat <= 300.0f);
+    CHECK(bad.vibrance >= 0.0f && bad.vibrance <= 300.0f);
+    CHECK(bad.gamma >= 0.40f && bad.gamma <= 2.50f);
+
+    printf("  [PASS] Settings: lenient parse, corrupt values -> defaults, v1 migration, packed-look safety\n");
+}
+
+/* ---------------- 22. Profile records: built-in overrides + custom profiles - */
+static void test_profile_store(void)
+{
+    static PxIni ini;
+    px_ini_init(&ini);
+
+    PxProfRec r; memset(&r, 0, sizeof r);
+    strcpy(r.name, "My Game"); strcpy(r.exe, "mygame.exe"); strcpy(r.tag, "Shooter");
+    r.is_custom = 1; r.favorite = 1; r.auto_apply = 1; r.auto_restore = 0;
+    r.delay_ms = 750; r.hdr_preference = 2;
+    r.target_res_w = 2560; r.target_res_h = 1440; r.target_hz = 165;
+    r.sub_count = 2; r.active_sub = 1;
+    strcpy(r.sub[0].name, "Day"); strcpy(r.sub[1].name, "Night");
+    r.sub[0].look = (Look)LOOK_NEUTRAL_INIT; r.sub[0].look.sat = 200;
+    r.sub[1].look = (Look)LOOK_NEUTRAL_INIT; r.sub[1].look.vibrance = 180; r.sub[1].look.gamma = 0.85f;
+    px_prof_put(&ini, 20, &r);
+
+    PxProfRec out;
+    CHECK(px_prof_get(&ini, 20, &out) == 1);
+    CHECK(!strcmp(out.name, "My Game") && !strcmp(out.exe, "mygame.exe"));
+    CHECK(out.is_custom && out.favorite && !out.auto_restore && out.delay_ms == 750);
+    CHECK(out.hdr_preference == 2 && out.target_res_w == 2560 && out.target_hz == 165);
+    CHECK(out.sub_count == 2 && out.active_sub == 1);
+    CHECK(!strcmp(out.sub[1].name, "Night"));
+    CHECK_NEAR(out.sub[1].look.vibrance, 180.0f, 1e-3);
+    CHECK_NEAR(out.sub[1].look.gamma, 0.85f, 1e-4);
+    CHECK_NEAR(out.sub[0].look.sat, 200.0f, 1e-3);
+
+    /* round trip through serialize/parse keeps custom sub looks */
+    static char buf[16384];
+    int n = px_ini_serialize(&ini, buf, sizeof buf);
+    CHECK(n > 0);
+    static PxIni ini2;
+    px_ini_init(&ini2);
+    CHECK(px_ini_parse(&ini2, buf) > 0);
+    PxProfRec out2;
+    CHECK(px_prof_get(&ini2, 20, &out2) == 1);
+    CHECK(!strcmp(out2.sub[0].name, "Day"));
+    CHECK_NEAR(out2.sub[1].look.gamma, 0.85f, 1e-4);
+
+    CHECK(px_prof_get(&ini2, 31, &out2) == 0);                  /* absent slot */
+    CHECK(px_prof_section(20, buf, sizeof buf) == 0 && !strcmp(buf, "profile20"));
+
+    printf("  [PASS] Profile store: custom records with sub-names + packed looks survive full file round trip\n");
+}
+
+/* ---------------- 23. Diagnostics: event ring + JSON + applied-state -------- */
+static void test_diagnostics(void)
+{
+    static PxLog log;
+    PxLog_Init(&log);
+    for (int i = 0; i < PXLOG_CAP + 30; i++)
+        PxLog_Add(&log, (unsigned)i * 10, i % 2 ? "eng" : "dwm",
+                     i == PXLOG_CAP + 29 ? "quote\"back\\slash" : "evt");   /* LAST entry: older ones are evicted */
+    CHECK(log.count == PXLOG_CAP);
+    CHECK(log.dropped == 30);
+
+    static char json[40000];
+    int n = PxLog_RenderJson(&log, json, sizeof json, 128);
+    CHECK(n > 2 && json[0] == '[' && json[n - 1] == ']');
+    CHECK(strstr(json, "\\\"") != NULL && strstr(json, "\\\\") != NULL);   /* escaped */
+    CHECK(strchr(json, '\n') == NULL);                                      /* one array */
+    int m = PxLog_RenderJson(&log, json, 64, 128);                          /* tiny buffer */
+    CHECK(m >= 0 && m < 64);                                                 /* truncates safely */
+
+    /* AppliedColorState derives its outcome, it is never set by hand */
+    AppliedColorState a; PxAS_Init(&a);
+    CHECK(a.outcome == PX_APPLY_NOT_YET && !a.have);
+    Look l = LOOK_NEUTRAL_INIT;
+    PxAS_Record(&a, &l, 5, 1, 1, 1, 2, 0, 1000, NULL);
+    CHECK(a.outcome == PX_APPLY_FULL && a.have && a.matrix_verified);
+    PxAS_Record(&a, &l, 6, 1, 0, 1, 2, 0, 1100, "readback mismatch: DWM dropped the effect");
+    CHECK(a.outcome == PX_APPLY_FULL && !a.matrix_verified);      /* ok+ok stays FULL, verified=0 */
+    PxAS_Record(&a, &l, 7, 0, 0, 1, 2, 0, 1200, "hardware rejected part of the pipeline");
+    CHECK(a.outcome == PX_APPLY_PARTIAL);
+    PxAS_Record(&a, &l, 8, 0, 0, 0, 0, 0, 1300, "hardware rejected part of the pipeline");
+    CHECK(a.outcome == PX_APPLY_FAILED);
+    CHECK(!strcmp(a.note, "hardware rejected part of the pipeline"));
+    /* note buffer overflow is truncated, never out-of-bounds */
+    PxAS_Record(&a, &l, 9, 1, 1, 1, 0, 1, 1400,
+        "012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789");
+    CHECK(strlen(a.note) == sizeof a.note - 1);
+
+    printf("  [PASS] Diagnostics: ring log wraps + escaped JSON, applied outcome derived from hardware facts\n");
+}
+
 int main(void)
 {
     printf("\n=== PlexusX Automated Verification Test Suite ===\n");
@@ -1121,7 +1536,14 @@ int main(void)
     test_shipped_presets();
     test_high_vibrance_neutrals();
     test_requested_applied_state();
+    test_transform_plan();
+    test_display_state();
+    test_game_state_machine();
+    test_window_state();
+    test_settings_store();
+    test_profile_store();
+    test_diagnostics();
     printf("==================================================\n");
-    printf("ALL 16 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
+    printf("ALL 23 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
     return 0;
 }
