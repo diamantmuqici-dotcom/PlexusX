@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include "color_transform.h"
 #include "color_math.h"
+#include "color_runtime_state.h"
 #include "../diagnostics/diagnostics.h"
 
 static int            g_eng_ready = 0;
@@ -17,6 +18,8 @@ static ColorState     g_cs;                 /* THE authoritative requested state
 static AppliedColorState g_applied;
 static const wchar_t *g_invalidate_why = L"startup";
 static PxLog          g_log;
+static PxEffectiveState g_effective;      /* REQUESTED -> EFFECTIVE -> APPLIED view */
+static int            g_apply_pending = 0;
 static unsigned long long g_last_log_key = ~0ull;   /* dedupe: same outcome+revision logs once */
 
 static unsigned now_ms(void) { return GetTickCount(); }
@@ -77,6 +80,42 @@ int Eng_RequestedMatchesApplied(void)
 
 void Eng_SetLook(const Look *lk) { PxCS_SetLook(&g_cs, lk); }
 
+/* ---------------- requested → effective → applied ---------------- */
+void Eng_SetApplyPending(int pending) { g_apply_pending = pending ? 1 : 0; }
+
+/* Gather the facts the EFFECTIVE derivation needs.  Every field is read from
+ * its owner (pipeline, display manager, game runtime) — nothing is assumed. */
+PxOutputFacts Eng_OutputFacts(void)
+{
+    PxOutputFacts f;
+    PxFacts_Init(&f);
+    f.mag_available   = PxPipe_MagAvailable();
+    f.ramps_available = PxPipe_RampDisplays() > 0;
+    f.displays_total  = Modes_MonitorCount();
+    f.hdr_active      = Dm_HdrAny();
+    {
+        MonitorInfo *mi = Modes_GetMonitor(Modes_CurrentMonitorIndex());
+        f.hdr_capable = mi ? (mi->hdr_capable ? 1 : 0) : 0;
+    }
+    {
+        const PxGameDisplayState *gs = Prof_GameState();
+        if (gs) {
+            f.presentation = gs->presentation;
+            f.game_active  = (gs->detected && gs->active) ? 1 : 0;
+        }
+    }
+    f.engine_enabled = g_cs.requested.enabled;
+    f.apply_pending  = g_apply_pending;
+    return f;
+}
+
+const PxEffectiveState *Eng_Effective(void)
+{
+    PxOutputFacts f = Eng_OutputFacts();
+    PxEff_Compute(&g_cs.requested, &g_applied, &f, &g_effective);
+    return &g_effective;
+}
+
 void Eng_SetMode(PxColorMode mode, int game_idx, int sub_idx)
 {
     if (g_cs.mode == mode && g_cs.game_index == game_idx && g_cs.game_sub == sub_idx) return;
@@ -85,6 +124,8 @@ void Eng_SetMode(PxColorMode mode, int game_idx, int sub_idx)
     g_cs.game_sub = sub_idx;
     g_cs.revision++;
 }
+
+static void eng_apply_done(void);
 
 /* ---------------- apply (the core guarantee lives here) ---------------- */
 void Eng_Apply(const Look *lk)
@@ -109,6 +150,7 @@ void Eng_Apply(const Look *lk)
     if (!res.ramps_ok || !res.matrix_ok)      note = "hardware rejected part of the pipeline";
     else if (!matrix_stuck)                   note = "readback mismatch: DWM dropped the effect";
     else if (!res.matrix_supported)           note = "no magnification path on this machine";
+    eng_apply_done();
     PxAS_Record(&g_applied, &plan.sanitized, g_cs.revision,
                 matrix_stuck, res.matrix_verified && res.matrix_held, res.ramps_ok,
                 res.ramps_called, !res.matrix_sent, now_ms(), note);
@@ -126,6 +168,10 @@ void Eng_Apply(const Look *lk)
 }
 
 void Eng_ApplyNow(void) { Eng_Apply(NULL); }
+
+/* An apply just completed: the "in flight" marker is cleared so the effective
+ * state reflects the hardware result, not the edit that triggered it. */
+static void eng_apply_done(void) { g_apply_pending = 0; }
 
 /* ---------------- invalidation / reassertion ---------------- */
 
@@ -164,6 +210,7 @@ void Eng_Reset(void)
     g_applied.have = 0;
     g_applied.outcome = PX_APPLY_NOT_YET;
     PxAS_Init(&g_applied);
+    g_apply_pending = 0;
     Eng_Log("eng", "forced reset (identity matrix + original ramps)");
 }
 

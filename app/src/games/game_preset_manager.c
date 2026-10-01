@@ -18,6 +18,7 @@
 #include "game_state.h"
 #include "game_display_state.h"
 #include "../settings/settings_store.h"
+#include <time.h>
 #include "../color/color_engine.h"
 
 #define MAX_PROFILES 32
@@ -38,6 +39,34 @@ static int              g_pending_idx = -1;
 static DWORD            g_pending_due = 0;
 static int              g_pending_snapshot = 0;
 static Look             g_pending_snapshot_look;
+static int              g_prev_target = -9;   /* desktop monitor target to restore */
+
+/* Executable aliases for launcher / shipping / store variants.  Only names
+ * that really are the SAME game process are listed; matching is already
+ * case-insensitive, so no case variants are needed. */
+static void prof_add_default_aliases(void)
+{
+    static const struct { const wchar_t *primary, *alias; } al[] = {
+        { L"FortniteClient-Win64-Shipping.exe", L"FortniteLauncher.exe" },
+        { L"VALORANT-Win64-Shipping.exe",       L"VALORANT.exe" },
+        { L"r5apex.exe",                        L"r5apex_dx12.exe" },
+        { L"cod.exe",                           L"ModernWarfare.exe" },
+        { L"javaw.exe",                         L"Minecraft.Windows.exe" },
+        { L"GTA5.exe",                          L"GTA5_Enhanced.exe" },
+        { L"TslGame.exe",                       L"TslGame_BE.exe" },
+        { L"ArcRaiders.exe",                    L"ArcRaiders-Win64-Shipping.exe" },
+        { L"Discovery.exe",                     L"Discovery-Win64-Shipping.exe" },
+    };
+    for (size_t i = 0; i < sizeof al / sizeof al[0]; i++) {
+        for (int p = 0; p < g_nprofiles; p++) {
+            if (PxW_EqCI(g_profiles[p].exe, al[i].primary)) {
+                PxProf_AddExe(&g_profiles[p], al[i].alias);
+                break;
+            }
+        }
+    }
+}
+
 
 /* ---------------- Preset Scenes / Looks ---------------- */
 static const SceneDef g_scenes[] = {
@@ -346,7 +375,7 @@ static void init_default_profiles(void)
         memset(p, 0, sizeof *p);
         lstrcpyW(p->name, L"Minecraft");
         lstrcpyW(p->exe,  L"javaw.exe");
-        lstrcpyW(p->tag,  L"Sandbox / Adventure");
+        lstrcpyW(p->tag,  L"Sandbox (javaw.exe shared)");
         p->auto_apply = 1;
         p->auto_restore = 1;
         p->sub_count = 3;
@@ -503,6 +532,40 @@ Profile *Prof_Get(int i) { return (i >= 0 && i < g_nprofiles) ? &g_profiles[i] :
 int Prof_ActiveIndex(void) { return g_active_profile; }
 void Prof_SetActiveIndex(int i) { if (i >= 0 && i < g_nprofiles) g_active_profile = i; }
 
+/* Find the profile that claims this executable (enabled profiles only: a
+ * disabled profile must never be auto-applied, but can still be selected by
+ * hand).  Matching covers the primary name, every alias and the custom path. */
+int Prof_FindExe(const wchar_t *exe)
+{
+    if (!exe || !exe[0]) return -1;
+    for (int i = 0; i < g_nprofiles; i++) {
+        if (!g_profiles[i].enabled) continue;
+        if (PxProf_MatchesExe(&g_profiles[i], exe)) return i;
+    }
+    return -1;
+}
+
+/* Same match, ignoring the enabled flag (profile editor "assign executable"). */
+int Prof_FindExeAny(const wchar_t *exe)
+{
+    if (!exe || !exe[0]) return -1;
+    for (int i = 0; i < g_nprofiles; i++) {
+        if (PxProf_MatchesExe(&g_profiles[i], exe)) return i;
+    }
+    return -1;
+}
+
+int Prof_FindName(const wchar_t *name)
+{
+    if (!name || !name[0]) return -1;
+    for (int i = 0; i < g_nprofiles; i++) {
+        if (PxW_EqCI(g_profiles[i].name, name)) return i;
+    }
+    return -1;
+}
+
+/* ---------------- profile editing (the library's CRUD surface) ------------- */
+
 int Prof_SelectSubMode(int game_idx, int sub_idx)
 {
     if (game_idx < 0 || game_idx >= g_nprofiles) return -1;
@@ -517,45 +580,212 @@ int Prof_SelectSubMode(int game_idx, int sub_idx)
     return 0;
 }
 
-/* exe matching is case-insensitive against the normalized (lowercase) names */
-int Prof_FindExe(const wchar_t *exe)
-{
-    if (!exe || !exe[0]) return -1;
-    for (int i = 0; i < g_nprofiles; i++) {
-        if (g_profiles[i].exe[0] && _wcsicmp(g_profiles[i].exe, exe) == 0)
-            return i;
-    }
-    return -1;
-}
-
+/* Backwards-compatible entry used by the older UI actions: an empty exe gets a
+ * placeholder the user can edit in the library, exactly like a new custom game. */
 int Prof_AddCustom(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk)
 {
+    return Prof_Create((name && name[0]) ? name : L"Custom Game",
+                       (exe && exe[0]) ? exe : L"game.exe",
+                       (tag && tag[0]) ? tag : L"Custom Game", lk);
+}
+
+int Prof_Create(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, const Look *lk)
+{
     if (g_nprofiles >= MAX_PROFILES) return -1;
-    Profile *p = &g_profiles[g_nprofiles];
-    memset(p, 0, sizeof *p);
-    lstrcpynW(p->name, name, 48);
-    lstrcpynW(p->exe, exe, 96);
-    lstrcpynW(p->tag, tag ? tag : L"Custom Game", 32);
-    p->is_custom = 1;
-    p->sub_count = 1;
-    lstrcpyW(p->sub[0].name, L"Custom");
-    p->sub[0].look = *lk;
-    cm_sanitize_look(&p->sub[0].look);
-    p->auto_apply = 1;
-    p->auto_restore = 1;
+    Profile p;
+    PxProf_MakeCustom(name, exe, tag, lk, &p);
+    g_profiles[g_nprofiles] = p;
     g_nprofiles++;
+    g_active_profile = g_nprofiles - 1;
     Prof_Save();
     return g_nprofiles - 1;
+}
+
+int Prof_DuplicateProfile(int src_idx, const wchar_t *new_name)
+{
+    if (src_idx < 0 || src_idx >= g_nprofiles || g_nprofiles >= MAX_PROFILES) return -1;
+    Profile copy;
+    PxProf_Duplicate(&g_profiles[src_idx], new_name, &copy);
+    g_profiles[g_nprofiles] = copy;
+    g_nprofiles++;
+    g_active_profile = g_nprofiles - 1;
+    Prof_Save();
+    return g_nprofiles - 1;
+}
+
+int Prof_Rename(int idx, const wchar_t *name)
+{
+    if (idx < 0 || idx >= g_nprofiles || !name || !name[0]) return -1;
+    PxProf_Rename(&g_profiles[idx], name);
+    g_profiles[idx].is_custom = 1;      /* a renamed profile is user-owned */
+    Prof_Save();
+    return 0;
 }
 
 int Prof_Delete(int i)
 {
     if (i < 0 || i >= g_nprofiles) return -1;
-    if (!g_profiles[i].is_custom) return -1; /* Don't delete built-in */
     for (int j = i; j < g_nprofiles - 1; j++) g_profiles[j] = g_profiles[j + 1];
     g_nprofiles--;
+    if (g_active_profile >= g_nprofiles) g_active_profile = g_nprofiles ? g_nprofiles - 1 : 0;
     Prof_Save();
     return 0;
+}
+
+int Prof_SetEnabled(int i, int on)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    g_profiles[i].enabled = on ? 1 : 0;
+    Prof_Save();
+    return g_profiles[i].enabled;
+}
+
+int Prof_SetAutoApply(int i, int on)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    g_profiles[i].auto_apply = on ? 1 : 0;
+    Prof_Save();
+    return g_profiles[i].auto_apply;
+}
+
+int Prof_SetAutoRestoreProfile(int i, int on)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    g_profiles[i].auto_restore = on ? 1 : 0;
+    Prof_Save();
+    return g_profiles[i].auto_restore;
+}
+
+int Prof_SetApplyDisplay(int i, int on)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    g_profiles[i].apply_display = on ? 1 : 0;
+    Prof_Save();
+    return g_profiles[i].apply_display;
+}
+
+int Prof_SetMonitorTarget(int i, int monitor_idx)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    g_profiles[i].monitor_idx = clampi(monitor_idx, -1, 7);
+    Prof_Save();
+    return g_profiles[i].monitor_idx;
+}
+
+int Prof_SetExePath(int i, const wchar_t *path)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    PxW_Copy(g_profiles[i].exe_path, PX_PROF_PATH_LEN, path ? path : L"");
+    wchar_t base[PX_PROF_EXE_LEN * 2];
+    PxProf_NormalizeExe(g_profiles[i].exe_path, base, PX_PROF_EXE_LEN * 2);
+    if (base[0]) PxProf_AddExe(&g_profiles[i], base);
+    Prof_Save();
+    return 0;
+}
+
+int Prof_AddExeName(int i, const wchar_t *exe)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    int slot = PxProf_AddExe(&g_profiles[i], exe);
+    if (slot >= 0) Prof_Save();
+    return slot;
+}
+
+int Prof_RemoveExeName(int i, int alias_slot)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    int ok = PxProf_RemoveExe(&g_profiles[i], alias_slot);
+    if (ok) Prof_Save();
+    return ok ? 0 : -1;
+}
+
+int Prof_DeleteExeName(int i, int slot)
+{
+    /* slot 0 is the primary name: promote the first alias instead of leaving
+     * the profile matching nothing. */
+    if (i < 0 || i >= g_nprofiles) return -1;
+    Profile *p = &g_profiles[i];
+    if (slot == 0) {
+        if (p->alias_count > 0) {
+            PxW_Copy(p->exe, PX_PROF_EXE_LEN, p->exe_alias[0]);
+            PxProf_RemoveExe(p, 0);
+        } else if (p->exe_path[0]) {
+            PxProf_NormalizeExe(p->exe_path, p->exe, PX_PROF_EXE_LEN);
+        } else {
+            return -1;
+        }
+    } else if (!PxProf_RemoveExe(p, slot - 1)) {
+        return -1;
+    }
+    Prof_Save();
+    return 0;
+}
+
+int Prof_SetSubLook(int i, int sub, const Look *lk)
+{
+    if (i < 0 || i >= g_nprofiles || !lk) return -1;
+    Profile *p = &g_profiles[i];
+    if (sub < 0 || sub >= p->sub_count) return -1;
+    p->sub[sub].look = *lk;
+    cm_sanitize_look(&p->sub[sub].look);
+    p->looks_edited = 1;
+    Prof_Save();
+    return 0;
+}
+
+int Prof_AddSubMode(int i, const wchar_t *name, const Look *lk)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    Profile *p = &g_profiles[i];
+    if (p->sub_count >= MAX_SUB_MODES) return -1;
+    SubMode *sm = &p->sub[p->sub_count];
+    PxW_Copy(sm->name, PX_PROF_SUB_NAME, (name && name[0]) ? name : L"Mode");
+    sm->look = lk ? *lk : (Look)LOOK_NEUTRAL_INIT;
+    cm_sanitize_look(&sm->look);
+    p->sub_count++;
+    p->looks_edited = 1;
+    Prof_Save();
+    return p->sub_count - 1;
+}
+
+int Prof_DeleteSubMode(int i, int sub)
+{
+    if (i < 0 || i >= g_nprofiles) return -1;
+    Profile *p = &g_profiles[i];
+    if (p->sub_count <= 1 || sub < 0 || sub >= p->sub_count) return -1;
+    for (int j = sub; j < p->sub_count - 1; j++) p->sub[j] = p->sub[j + 1];
+    p->sub_count--;
+    if (p->active_sub >= p->sub_count) p->active_sub = p->sub_count - 1;
+    p->looks_edited = 1;
+    Prof_Save();
+    return 0;
+}
+
+int Prof_MarkActivated(int idx)
+{
+    if (idx < 0 || idx >= g_nprofiles) return -1;
+    g_profiles[idx].last_activated = (unsigned long)time(NULL);
+    g_profiles[idx].apply_count++;
+    g_active_profile = idx;
+    Prof_Save();
+    return 0;
+}
+
+/* Restore every built-in profile to its shipped table (user customs survive). */
+int Prof_ResetBuiltins(void)
+{
+    Profile keep[MAX_PROFILES];
+    int nkeep = 0;
+    for (int i = 0; i < g_nprofiles; i++)
+        if (g_profiles[i].is_custom) keep[nkeep++] = g_profiles[i];
+
+    init_default_profiles();
+    prof_add_default_aliases();
+    for (int i = 0; i < nkeep && g_nprofiles < MAX_PROFILES; i++)
+        g_profiles[g_nprofiles++] = keep[i];
+    g_active_profile = 0;
+    Prof_Save();
+    return g_nprofiles;
 }
 
 int Prof_ToggleFavorite(int i)
@@ -568,10 +798,7 @@ int Prof_ToggleFavorite(int i)
     return 0;
 }
 
-const wchar_t *Prof_CurrentForeground(void)
-{
-    return g_current_fg;
-}
+const wchar_t *Prof_CurrentForeground(void) { return g_current_fg; }
 
 void Prof_SetDetect(int on)      { g_detect = on ? 1 : 0; Prof_Save(); }
 int  Prof_Detect(void)           { return g_detect; }
@@ -579,6 +806,8 @@ void Prof_SetAutoRestore(int on) { g_auto_restore = on ? 1 : 0; Prof_Save(); }
 int  Prof_GetAutoRestore(void)   { return g_auto_restore; }
 void Prof_SetDelayMs(int ms)     { g_delay_ms = clampi(ms, 0, 3000); Prof_Save(); }
 int  Prof_GetDelayMs(void)       { return g_delay_ms; }
+
+int  Prof_AutoSwitch(void)       { return g_detect && g_auto_restore; }   /* used by the status bar */
 
 /* ---------------- Runtime game state accessors ---------------- */
 const PxGameDisplayState *Prof_GameState(void) { return &g_gds; }
@@ -596,12 +825,12 @@ void Prof_SyncApplied(const wchar_t *why)
 static void w2u(const wchar_t *w, char *u, int cap)
 {
     u[0] = 0;
-    if (w && w[0]) WideCharToMultiByte(CP_UTF8, 0, w, -1, u, cap, NULL, NULL);
+    if (w && w[0]) PxW_ToUtf8(w, u, (size_t)cap);
 }
 static void u2w(const char *u, wchar_t *w, int cap)
 {
     w[0] = 0;
-    if (u && u[0]) MultiByteToWideChar(CP_UTF8, 0, u, -1, w, cap);
+    if (u && u[0]) PxW_FromUtf8(u, w, (size_t)cap);
 }
 
 /* ---------------- Preset activation (the no-stacking guarantee) ------------- */
@@ -616,8 +845,25 @@ static void load_game_idx(int idx)
     g_active_profile = idx;
     Ui_LoadLook(&p->sub[p->active_sub].look);
     Eng_SetMode(PX_CSMODE_GAME, idx, p->active_sub);
+
+    /* profile-scoped monitor target (the desktop target is remembered so the
+     * restore path can put it back) */
+    if (g_prev_target < -9) g_prev_target = Eng_GetTargetMonitor();
+    if (p->monitor_idx >= 0 && p->monitor_idx < Modes_MonitorCount())
+        Eng_SetTargetMonitor(p->monitor_idx);
+
     g_gds.profile_idx = idx;
     g_gds.sub_idx = p->active_sub;
+    Prof_MarkActivated(idx);
+
+    /* Optional display preference: only when the profile explicitly opts in,
+     * so PlexusX never surprises the user with a mode change at game launch. */
+    if (p->apply_display && (p->target_res_w > 0 || p->target_res_h > 0 || p->target_hz > 0)) {
+        int rc = Modes_ApplyResHz(p->target_res_w, p->target_res_h, p->target_hz);
+        Eng_Log("disp", "profile display preference %dx%d@%d -> %s",
+                p->target_res_w, p->target_res_h, p->target_hz, rc == 0 ? "applied" : "unsupported");
+    }
+
     wchar_t msg[128];
     wsprintfW(msg, L"%s: %s profile applied", p->name, p->sub[p->active_sub].name);
     Ui_Notify(msg);
@@ -636,6 +882,7 @@ void Prof_TickPending(void)
         g_gsm.have_snapshot = 1;
     }
     load_game_idx(idx);
+    Eng_SetApplyPending(0);
     Eng_Invalidate(L"game-profile-delayed");
     Main_ApplyAll();
     Prof_SyncApplied(L"game-profile");
@@ -665,7 +912,7 @@ void Prof_NotifyForeground(const PxDetectedForeground *f)
         return;
     }
 
-    /* match: lowercase-normalized exe against the profile table */
+    /* match: normalized exe against the profile table (aliases + custom paths) */
     int fg_idx = Prof_FindExe(f->exe);
 
     PxGameDecision d = PxGameSM_OnForeground(&g_gsm, f->exe, fg_idx, g_auto_restore,
@@ -680,6 +927,7 @@ void Prof_NotifyForeground(const PxDetectedForeground *f)
                 g_pending_due = GetTickCount() + (DWORD)g_delay_ms;
                 g_pending_snapshot = d.snapshot;
                 g_pending_snapshot_look = g_gsm.snapshot;
+                Eng_SetApplyPending(1);         /* honest APPLYING while the delay runs */
             } else {
                 load_game_idx(fg_idx);
             }
@@ -692,8 +940,13 @@ void Prof_NotifyForeground(const PxDetectedForeground *f)
         Eng_Log("game", "%ls focused: profile %d, %s", g_gds.exe, fg_idx, px_pres_name(f->presentation));
     } else if (d.restore) {
         g_pending_idx = -1;
+        Eng_SetApplyPending(0);
         Ui_LoadLook(&g_gsm.snapshot);              /* absolute restore, not a delta */
         Eng_SetMode(PX_CSMODE_GLOBAL, -1, 0);
+        if (g_prev_target > -9) {                  /* put the desktop monitor target back */
+            Eng_SetTargetMonitor(g_prev_target);
+            g_prev_target = -9;
+        }
         Eng_Log("game", "desktop restored (global look reloaded)");
         g_gds.detected = 0;
         g_gds.active = 0;
@@ -727,7 +980,9 @@ int Prof_Poll(void)
 /* ---------------- General settings + persistence ---------------- */
 int Prof_Init(void)
 {
+    g_prev_target = -9;
     init_default_profiles();
+    prof_add_default_aliases();
     PxGameSM_Init(&g_gsm);
     PxGDS_Init(&g_gds);
 
@@ -743,37 +998,70 @@ int Prof_Init(void)
         if (i < g_nprofiles && !r.is_custom) {
             Profile *p = &g_profiles[i];
             p->favorite      = r.favorite;
+            p->enabled       = r.enabled;
             p->auto_apply    = r.auto_apply;
             p->auto_restore  = r.auto_restore;
             p->delay_ms      = r.delay_ms;
+            p->apply_display = r.apply_display;
             p->hdr_preference = r.hdr_preference;
+            p->monitor_idx   = r.monitor_idx;
             p->target_res_w  = r.target_res_w;
             p->target_res_h  = r.target_res_h;
             p->target_hz     = r.target_hz;
+            p->last_activated = r.last_activated;
+            p->apply_count   = r.apply_count;
+            for (int a = 0; a < r.alias_count && a < PX_PROF_ALIASES; a++) {
+                wchar_t al[PX_PROF_EXE_LEN];
+                u2w(r.exe_alias[a], al, PX_PROF_EXE_LEN);
+                PxProf_AddExe(p, al);
+            }
+            if (r.exe_path[0]) u2w(r.exe_path, p->exe_path, PX_PROF_PATH_LEN);
             if (r.active_sub >= 0 && r.active_sub < p->sub_count) p->active_sub = r.active_sub;
+            if (r.looks_edited) {                  /* the user re-tuned a built-in */
+                int n = r.sub_count;
+                if (n > p->sub_count) n = p->sub_count;
+                for (int sb = 0; sb < n; sb++) {
+                    u2w(r.sub[sb].name, p->sub[sb].name, PX_PROF_SUB_NAME);
+                    p->sub[sb].look = r.sub[sb].look;   /* already sanitised by the store */
+                }
+                p->looks_edited = 1;
+            }
         } else if (r.is_custom && g_nprofiles < MAX_PROFILES) {
             Profile *p = &g_profiles[g_nprofiles++];
-            memset(p, 0, sizeof *p);
-            u2w(r.name, p->name, 48);
-            u2w(r.exe,  p->exe,  96);
-            u2w(r.tag,  p->tag,  32);
+            PxProf_Init(p);
+            u2w(r.name, p->name, PX_PROF_NAME_LEN);
+            u2w(r.exe,  p->exe,  PX_PROF_EXE_LEN);
+            u2w(r.tag,  p->tag,  PX_PROF_TAG_LEN);
             p->is_custom = 1;
             p->favorite = r.favorite;
+            p->enabled = r.enabled;
             p->auto_apply = r.auto_apply;
             p->auto_restore = r.auto_restore;
             p->delay_ms = r.delay_ms;
+            p->apply_display = r.apply_display;
             p->hdr_preference = r.hdr_preference;
+            p->monitor_idx = r.monitor_idx;
+            p->last_activated = r.last_activated;
+            p->apply_count = r.apply_count;
             p->target_res_w = r.target_res_w;
             p->target_res_h = r.target_res_h;
             p->target_hz = r.target_hz;
             p->sub_count = r.sub_count < 1 ? 1 : (r.sub_count > MAX_SUB_MODES ? MAX_SUB_MODES : r.sub_count);
             for (int s = 0; s < p->sub_count; s++) {
-                u2w(r.sub[s].name, p->sub[s].name, 32);
+                u2w(r.sub[s].name, p->sub[s].name, PX_PROF_SUB_NAME);
                 p->sub[s].look = r.sub[s].look;    /* already sanitized by the store */
             }
+            for (int a = 0; a < r.alias_count && a < PX_PROF_ALIASES; a++) {
+                wchar_t al[PX_PROF_EXE_LEN];
+                u2w(r.exe_alias[a], al, PX_PROF_EXE_LEN);
+                PxProf_AddExe(p, al);
+            }
+            if (r.exe_path[0]) u2w(r.exe_path, p->exe_path, PX_PROF_PATH_LEN);
             p->active_sub = (r.active_sub >= 0 && r.active_sub < p->sub_count) ? r.active_sub : 0;
+            p->looks_edited = 1;
         }
     }
+    g_active_profile = clampi(g_active_profile, 0, g_nprofiles ? g_nprofiles - 1 : 0);
     return g_nprofiles;
 }
 
@@ -785,7 +1073,8 @@ int Prof_Save(void)
     px_ini_set_int(pi, "general", "delay_ms", g_delay_ms);
     px_ini_set_int(pi, "meta", "schema", PX_CFG_SCHEMA);
 
-    /* every slot: built-ins persist their mutable fields, customs their data */
+    /* every slot: built-ins persist their mutable fields (+ edited looks),
+     * customs their full data */
     for (int i = 0; i < g_nprofiles && i < PX_PROFS_MAX; i++) {
         Profile *p = &g_profiles[i];
         PxProfRec r;
@@ -793,12 +1082,23 @@ int Prof_Save(void)
         w2u(p->name, r.name, sizeof r.name);
         w2u(p->exe,  r.exe,  sizeof r.exe);
         w2u(p->tag,  r.tag,  sizeof r.tag);
+        for (int a = 0; a < p->alias_count && a < PX_ALIAS_MAX; a++) {
+            w2u(p->exe_alias[a], r.exe_alias[a], sizeof r.exe_alias[a]);
+            if (r.exe_alias[a][0]) r.alias_count = a + 1;
+        }
+        w2u(p->exe_path, r.exe_path, sizeof r.exe_path);
         r.is_custom = p->is_custom;
         r.favorite = p->favorite;
+        r.enabled = p->enabled;
         r.auto_apply = p->auto_apply;
         r.auto_restore = p->auto_restore;
         r.delay_ms = p->delay_ms;
+        r.apply_display = p->apply_display;
+        r.looks_edited = p->looks_edited;
         r.hdr_preference = p->hdr_preference;
+        r.monitor_idx = p->monitor_idx;
+        r.last_activated = p->last_activated;
+        r.apply_count = p->apply_count;
         r.target_res_w = p->target_res_w;
         r.target_res_h = p->target_res_h;
         r.target_hz = p->target_hz;
@@ -814,83 +1114,128 @@ int Prof_Save(void)
     return 0;
 }
 
-/* ---------------- JSON Profile Schema Export & Import ---------------- */
+/* ---------------- JSON Profile Schema Export & Import ----------------
+ * The codec lives in games/game_profile.c (pure, host-tested); this file only
+ * does the Windows file IO.  UTF-8 bytes on disk, versioned documents. */
+
+static int prof_write_file(const wchar_t *path, const char *data)
+{
+    FILE *f = _wfopen(path, L"wb");
+    if (!f) return -1;
+    size_t n = strlen(data);
+    size_t wr = fwrite(data, 1, n, f);
+    fclose(f);
+    return wr == n ? 0 : -1;
+}
+
+static int prof_read_file(const wchar_t *path, char *buf, size_t cap)
+{
+    FILE *f = _wfopen(path, L"rb");
+    size_t rd;
+    if (!f) return -1;
+    rd = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[rd] = 0;
+    return (int)rd;
+}
+
 int Prof_ExportJson(const Profile *p, const wchar_t *filepath)
 {
+    char *buf;
+    int rc;
     if (!p || !filepath) return -1;
-    FILE *f = _wfopen(filepath, L"w, ccs=UTF-8");
-    if (!f) return -1;
-
-    const Look *lk = &p->sub[p->active_sub].look;
-    fwprintf(f, L"{\n");
-    fwprintf(f, L"  \"schema\": \"PlexusX/v2\",\n");
-    fwprintf(f, L"  \"name\": \"%ls\",\n", p->name);
-    fwprintf(f, L"  \"exe\": \"%ls\",\n", p->exe);
-    fwprintf(f, L"  \"tag\": \"%ls\",\n", p->tag);
-    fwprintf(f, L"  \"sub_mode\": \"%ls\",\n", p->sub[p->active_sub].name);
-    fwprintf(f, L"  \"color\": {\n");
-    fwprintf(f, L"    \"enabled\": %d,\n", lk->enabled);
-    fwprintf(f, L"    \"sat\": %.1f,\n", lk->sat);
-    fwprintf(f, L"    \"vibrance\": %.1f,\n", lk->vibrance);
-    fwprintf(f, L"    \"bri\": %.1f,\n", lk->bri);
-    fwprintf(f, L"    \"con\": %.1f,\n", lk->con);
-    fwprintf(f, L"    \"gamma\": %.2f,\n", lk->gamma);
-    fwprintf(f, L"    \"temp\": %.0f,\n", lk->temp);
-    fwprintf(f, L"    \"tint\": %.1f,\n", lk->tint);
-    fwprintf(f, L"    \"r_gain\": %.1f,\n", lk->r_gain);
-    fwprintf(f, L"    \"g_gain\": %.1f,\n", lk->g_gain);
-    fwprintf(f, L"    \"b_gain\": %.1f,\n", lk->b_gain);
-    fwprintf(f, L"    \"shadows\": %.1f,\n", lk->shadows);
-    fwprintf(f, L"    \"highlights\": %.1f,\n", lk->highlights);
-    fwprintf(f, L"    \"black_level\": %.1f,\n", lk->black_level);
-    fwprintf(f, L"    \"white_point\": %.1f,\n", lk->white_point);
-    fwprintf(f, L"    \"clarity\": %.1f\n", lk->clarity);
-    fwprintf(f, L"  }\n");
-    fwprintf(f, L"}\n");
-
-    fclose(f);
-    return 0;
+    buf = (char *)malloc(64 * 1024);
+    if (!buf) return -1;
+    PxProf_ToJson(p, buf, 64 * 1024);
+    rc = prof_write_file(filepath, buf);
+    free(buf);
+    Eng_Log("cfg", "profile exported: %s", rc == 0 ? "ok" : "write failed");
+    return rc;
 }
 
 int Prof_ImportJson(Profile *out, const wchar_t *filepath)
 {
+    char *buf;
+    int rc, rd;
     if (!out || !filepath) return -1;
-    FILE *f = _wfopen(filepath, L"r");
-    if (!f) return -1;
+    buf = (char *)malloc(64 * 1024);
+    if (!buf) return -1;
+    rd = prof_read_file(filepath, buf, 64 * 1024);
+    rc = (rd > 0 && PxProf_FromJson(buf, out)) ? 0 : -1;
+    free(buf);
+    return rc;
+}
 
-    char buf[2048];
-    size_t rd = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    if (!rd) return -1;
-    buf[rd] = 0;
-
-    memset(out, 0, sizeof *out);
-    out->is_custom = 1;
-    out->sub_count = 1;
-    lstrcpyW(out->name, L"Imported Profile");
-    lstrcpyW(out->sub[0].name, L"Custom");
-
-    Look *lk = &out->sub[0].look;
-    lk->enabled = 1;
-    lk->sat = 150; lk->vibrance = 120; lk->bri = 100; lk->con = 100;
-    lk->gamma = 1.0f; lk->temp = 6500; lk->r_gain = 100; lk->g_gain = 100; lk->b_gain = 100;
-    lk->shadows = 100; lk->highlights = 100; lk->black_level = 100; lk->white_point = 100;
-    lk->clarity = 100;
-
-    char *p = strstr(buf, "\"name\":");
-    if (p) {
-        char val[64] = { 0 };
-        sscanf(p, "\"name\": \"%63[^\"]\"", val);
-        MultiByteToWideChar(CP_UTF8, 0, val, -1, out->name, 48);
+int Prof_ImportFile(int *out_idx, const wchar_t *filepath)
+{
+    Profile p;
+    if (Prof_ImportJson(&p, filepath) != 0) return -1;
+    if (g_nprofiles >= MAX_PROFILES) return -1;
+    {   /* keep names unique: "Name", "Name 2", ... */
+        int suffix = 2;
+        wchar_t base[PX_PROF_NAME_LEN];
+        PxW_Copy(base, PX_PROF_NAME_LEN, p.name);
+        while (Prof_FindName(p.name) >= 0 && suffix < 100) {
+            wchar_t cand[PX_PROF_NAME_LEN];
+            _snwprintf(cand, PX_PROF_NAME_LEN, L"%s %d", base, suffix++);
+            cand[PX_PROF_NAME_LEN - 1] = 0;
+            PxW_Copy(p.name, PX_PROF_NAME_LEN, cand);
+        }
     }
-    p = strstr(buf, "\"sat\":");
-    if (p) { float s; if (sscanf(p, "\"sat\": %f", &s) == 1) lk->sat = clampf(s, 0, 300); }
-    p = strstr(buf, "\"vibrance\":");
-    if (p) { float v; if (sscanf(p, "\"vibrance\": %f", &v) == 1) lk->vibrance = clampf(v, 0, 300); }
-    p = strstr(buf, "\"gamma\":");
-    if (p) { float g; if (sscanf(p, "\"gamma\": %f", &g) == 1) lk->gamma = clampf(g, 0.40f, 2.50f); }
-    p = strstr(buf, "\"temp\":");
-    if (p) { float t; if (sscanf(p, "\"temp\": %f", &t) == 1) lk->temp = clampf(t, 3000, 10000); }
-
+    g_profiles[g_nprofiles] = p;
+    g_nprofiles++;
+    g_active_profile = g_nprofiles - 1;
+    Prof_Save();
+    if (out_idx) *out_idx = g_nprofiles - 1;
     return 0;
+}
+
+int Prof_ExportFile(int idx, const wchar_t *filepath)
+{
+    Profile *p = Prof_Get(idx);
+    return p ? Prof_ExportJson(p, filepath) : -1;
+}
+
+int Prof_ExportLibrary(const wchar_t *filepath)
+{
+    size_t cap = 512 * 1024;
+    char *buf = (char *)malloc(cap);
+    int rc;
+    if (!buf) return -1;
+    PxProf_LibraryToJson(g_profiles, g_nprofiles, buf, cap);
+    rc = prof_write_file(filepath, buf);
+    free(buf);
+    return rc;
+}
+
+int Prof_ImportLibrary(const wchar_t *filepath)
+{
+    size_t cap = 512 * 1024;
+    char *buf = (char *)malloc(cap);
+    Profile tmp[MAX_PROFILES];
+    int n, added = 0, rd;
+    if (!buf) return -1;
+    rd = prof_read_file(filepath, buf, cap);
+    if (rd <= 0) { free(buf); return -1; }
+    n = PxProf_LibraryFromJson(buf, tmp, MAX_PROFILES);
+    free(buf);
+    for (int i = 0; i < n && g_nprofiles < MAX_PROFILES; i++) {
+        Profile p = tmp[i];
+        if (!p.name[0]) continue;
+        /* never silently replace an existing name */
+        if (Prof_FindName(p.name) >= 0) {
+            wchar_t cand[PX_PROF_NAME_LEN];
+            _snwprintf(cand, PX_PROF_NAME_LEN, L"%s (imported)", p.name);
+            cand[PX_PROF_NAME_LEN - 1] = 0;
+            PxW_Copy(p.name, PX_PROF_NAME_LEN, cand);
+        }
+        p.is_custom = 1;
+        g_profiles[g_nprofiles++] = p;
+        added++;
+    }
+    if (added) {
+        g_active_profile = g_nprofiles - 1;
+        Prof_Save();
+    }
+    return added;
 }

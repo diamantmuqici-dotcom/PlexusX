@@ -11,7 +11,7 @@ CFLAGS  ?= -target x86_64-windows-gnu -O2 -std=c11 -Wall \
            -DUNICODE -D_UNICODE -D_CRT_SECURE_NO_WARNINGS -municode \
            -Isrc -Isrc/color -Isrc/display -Isrc/games -Isrc/settings -Isrc/windows -Isrc/diagnostics
 LDFLAGS ?= -Wl,--subsystem,windows
-LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomctl32 -lshlwapi -ldwmapi -lwtsapi32 -lm
+LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomctl32 -lcomdlg32 -lshlwapi -ldwmapi -lwtsapi32 -lm
 SRC     := $(shell find src -name '*.c' | sort)
 HDR     := $(shell find src -name '*.h' | sort)
 OUT_DIR := ../site/download

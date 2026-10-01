@@ -406,6 +406,7 @@ static inline int px_look_unpack(const char *s, Look *lk)
 
 #define PX_PROFS_MAX   32
 #define PX_SUBS_MAX    12
+#define PX_ALIAS_MAX   4       /* extra executable names per profile (see game_profile.h) */
 
 typedef struct PxSubRec {
     char name[32];
@@ -415,13 +416,22 @@ typedef struct PxSubRec {
 typedef struct PxProfRec {
     char    name[64];
     char    exe[96];
+    char    exe_alias[PX_ALIAS_MAX][96];   /* launcher / store / shipping variants  */
+    char    exe_path[180];                 /* custom executable path               */
+    int     alias_count;
     char    tag[32];
     int     is_custom;
     int     favorite;
+    int     enabled;                       /* 0 = detection skips this profile     */
     int     auto_apply;
     int     auto_restore;
     int     delay_ms;
+    int     apply_display;
+    int     looks_edited;
     int     hdr_preference;
+    int     monitor_idx;                   /* -1 = default/all                     */
+    unsigned long last_activated;          /* unix seconds, 0 = never              */
+    unsigned apply_count;
     int     target_res_w, target_res_h, target_hz;
     int     sub_count;
     int     active_sub;
@@ -444,15 +454,41 @@ static inline void px_prof_put(PxIni *ini, int idx, const PxProfRec *r)
     px_ini_set(ini, sec, "name", r->name);
     px_ini_set(ini, sec, "exe",  r->exe);
     px_ini_set(ini, sec, "tag",  r->tag);
+    {
+        int na = r->alias_count;
+        if (na < 0) na = 0;
+        if (na > PX_ALIAS_MAX) na = PX_ALIAS_MAX;
+        px_ini_set_int(ini, sec, "aliases", na);
+        for (int i = 0; i < na; i++) {
+            char key[PXINI_KEY];
+            snprintf(key, sizeof key, "alias%d", i);
+            px_ini_set(ini, sec, key, r->exe_alias[i]);
+        }
+    }
+    px_ini_set(ini, sec, "exe_path", r->exe_path);
     px_ini_set_int(ini, sec, "custom", r->is_custom);
     px_ini_set_int(ini, sec, "fav", r->favorite);
+    px_ini_set_int(ini, sec, "enabled", r->enabled ? 1 : 0);
+    px_ini_set_int(ini, sec, "mon", r->monitor_idx);
     px_ini_set_int(ini, sec, "auto", r->auto_apply);
+    px_ini_set_int(ini, sec, "appldisp", r->apply_display);
+    px_ini_set_int(ini, sec, "looks", r->looks_edited);
     px_ini_set_int(ini, sec, "restore", r->auto_restore);
     px_ini_set_int(ini, sec, "delay", r->delay_ms);
     px_ini_set_int(ini, sec, "hdr", r->hdr_preference);
     px_ini_set_int(ini, sec, "resw", r->target_res_w);
     px_ini_set_int(ini, sec, "resh", r->target_res_h);
     px_ini_set_int(ini, sec, "hz", r->target_hz);
+    if (r->last_activated) {
+        char lb[32];
+        snprintf(lb, sizeof lb, "%lu", r->last_activated);
+        px_ini_set(ini, sec, "last", lb);
+    }
+    if (r->apply_count) {
+        char ab[32];
+        snprintf(ab, sizeof ab, "%u", r->apply_count);
+        px_ini_set(ini, sec, "applies", ab);
+    }
     {
         int n = r->sub_count;
         if (n < 0) n = 0;
@@ -462,7 +498,7 @@ static inline void px_prof_put(PxIni *ini, int idx, const PxProfRec *r)
         if (act < 0 || act >= (n > 0 ? n : 1)) act = 0;
         px_ini_set_int(ini, sec, "act", act);
 
-        if (r->is_custom) {                     /* full look data for custom games */
+        if (r->is_custom || r->looks_edited) {  /* full look data when the user owns/edited it */
             char line[PXINI_VALUE];
             for (int sb = 0; sb < n; sb++) {
                 char key[PXINI_KEY];
@@ -492,10 +528,46 @@ static inline int px_prof_get(const PxIni *ini, int idx, PxProfRec *r)
         if ((v = px_ini_get(ini, sec, "exe")))  { size_t i = 0; for (; v[i] && i + 1 < sizeof r->exe; i++) r->exe[i] = v[i]; }
         if ((v = px_ini_get(ini, sec, "tag")))  { size_t i = 0; for (; v[i] && i + 1 < sizeof r->tag; i++) r->tag[i] = v[i]; }
     }
+    {
+        /* exe aliases: bounded count, each entry clamped, duplicates dropped */
+        const char *v = 0;
+        int na = px_ini_get_int(ini, sec, "aliases", 0);
+        if (na < 0) na = 0;
+        if (na > PX_ALIAS_MAX) na = PX_ALIAS_MAX;
+        for (int i = 0; i < na; i++) {
+            char key[PXINI_KEY];
+            const char *av;
+            snprintf(key, sizeof key, "alias%d", i);
+            av = px_ini_get(ini, sec, key);
+            if (!av || !av[0]) continue;
+            {
+                size_t n = 0;
+                for (; av[n] && n + 1 < sizeof r->exe_alias[0]; n++)
+                    r->exe_alias[r->alias_count][n] = av[n];
+                r->exe_alias[r->alias_count][n] = 0;
+                r->alias_count++;
+            }
+        }
+        if ((v = px_ini_get(ini, sec, "exe_path"))) {
+            size_t i = 0;
+            for (; v[i] && i + 1 < sizeof r->exe_path; i++) r->exe_path[i] = v[i];
+        }
+    }
     r->is_custom      = px_ini_get_int(ini, sec, "custom", 0) ? 1 : 0;
     r->favorite       = px_ini_get_int(ini, sec, "fav", 0) ? 1 : 0;
+    r->enabled        = px_ini_get_int(ini, sec, "enabled", 1) ? 1 : 0;
+    r->monitor_idx    = px_ini_get_int(ini, sec, "mon", -1);
+    if (r->monitor_idx < -1) r->monitor_idx = -1;
+    if (r->monitor_idx > 7) r->monitor_idx = 7;
+    r->last_activated = (unsigned long)px_ini_get_int(ini, sec, "last", 0);
+    {
+        int ac = px_ini_get_int(ini, sec, "applies", 0);
+        r->apply_count = (ac > 0) ? (unsigned)ac : 0u;
+    }
     r->auto_apply     = px_ini_get_int(ini, sec, "auto", r->is_custom ? 1 : 0) ? 1 : 0;
     r->auto_restore   = px_ini_get_int(ini, sec, "restore", 1) ? 1 : 0;
+    r->apply_display  = px_ini_get_int(ini, sec, "appldisp", 0) ? 1 : 0;
+    r->looks_edited   = px_ini_get_int(ini, sec, "looks", 0) ? 1 : 0;
     r->delay_ms       = px_ini_get_int(ini, sec, "delay", 0);
     if (r->delay_ms < 0) r->delay_ms = 0;
     if (r->delay_ms > 3000) r->delay_ms = 3000;

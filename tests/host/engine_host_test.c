@@ -29,6 +29,7 @@ static int ramp_eq(unsigned short a[3][256], unsigned short b[3][256]) { return 
 
 static void reset_world(int ndisp)
 {
+    MockFacts_Reset();
     memset(g_mock_disp, 0, sizeof g_mock_disp);
     for (int i = 0; i < ndisp; i++) { g_mock_disp[i].present = 1; g_mock_disp[i].set_ok = 1; cm_identity_ramp(g_mock_disp[i].hw); }
     g_mock_set_total = g_mock_mag_calls = g_mock_mag_bad = g_mock_mag_init = g_mock_mag_uninit = g_mock_dirty_creates = 0;
@@ -362,6 +363,52 @@ int main(int argc, char **argv)
     g_mock_mag_set_fail = 0;
     Eng_Reassert();
     CHECK(Eng_Applied()->outcome == PX_APPLY_FULL);
+    Eng_Shutdown();
+
+    /* ---- S20 HDR output: PASSTHROUGH, and the effective look is identity ---- */
+    scen("S20 HDR output: PASSTHROUGH with identity effective look, never ACTIVE");
+    reset_world(2); start(0);
+    g_mock_facts.hdr_any = 1;
+    g_mock_facts.mon[0].hdr_enabled = 1;
+    g_mock_facts.mon[0].color_space_raw = 0x0c;          /* HDR10 PQ */
+    {
+        Look hdrlook = neutral();
+        hdrlook.sat = 200; hdrlook.vibrance = 180; hdrlook.gamma = 1.20f;
+        Eng_Apply(&hdrlook);
+        {
+            const PxEffectiveState *eff = Eng_Effective();
+            CHECK(eff->status == PX_STATUS_PASSTHROUGH);
+            CHECK(eff->hdr_active == 1);
+            CHECK(eff->linear_deliverable == 0 && eff->curves_deliverable == 0);
+            CHECK(PxEff_Eq(eff->effective.sat, 100.0f) && PxEff_Eq(eff->effective.gamma, 1.0f));
+            CHECK(eff->reason[0] != 0);
+        }
+    }
+    Eng_Shutdown();
+
+    /* ---- S21 exclusive fullscreen: LIMITED, curves-only effective look ---- */
+    scen("S21 exclusive fullscreen: LIMITED, effective look is curves-only");
+    reset_world(2); start(0);
+    g_mock_facts.game.detected = 1;
+    g_mock_facts.game.active = 1;
+    g_mock_facts.game.presentation = PX_PRES_FULLSCREEN_SURFACE;
+    g_mock_facts.game.profile_idx = 0;
+    {
+        Look ex = neutral();
+        ex.sat = 220; ex.vibrance = 160;      /* linear part the matrix would carry */
+        ex.gamma = 1.15f; ex.shadows = 130;   /* tone curves the LUT can carry      */
+        Eng_Apply(&ex);
+        {
+            const PxEffectiveState *eff = Eng_Effective();
+            CHECK(eff->exclusive_like == 1);
+            CHECK(eff->status == PX_STATUS_LIMITED);
+            CHECK(eff->linear_deliverable == 0);
+            CHECK(eff->curves_deliverable == 1);
+            CHECK(PxEff_Eq(eff->effective.sat, 100.0f));      /* chroma cannot be carried */
+            CHECK(PxEff_Eq(eff->effective.gamma, 1.15f));     /* tone curve still can     */
+            CHECK(eff->reason[0] != 0);
+        }
+    }
     Eng_Shutdown();
 
     printf("ENGINE HOST SCENARIOS PASSED: %d scenarios, %d checks\n", g_scen, g_checks);

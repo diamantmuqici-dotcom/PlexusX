@@ -16,6 +16,7 @@
 #endif
 
 HWND      g_hwnd = NULL;
+static int g_force_quit;      /* tray Exit / shutdown: bypass minimize-to-tray */
 HINSTANCE g_inst = NULL;
 wchar_t   g_appdir[MAX_PATH];
 wchar_t   g_appdata[MAX_PATH];
@@ -39,6 +40,8 @@ static int startup_enabled(void);
 #define TRAY_RESET     105
 #define TRAY_EXIT      106
 #define TRAY_EMERGENCY 107
+#define TRAY_KEEP_MODE 108
+#define TRAY_REVERT_MODE 109
 
 const wchar_t *Main_GetExePath(void) { return g_exepath; }
 const wchar_t *Main_GetAppDataPath(void) { return g_appdata; }
@@ -533,6 +536,19 @@ static void tray_menu(void)
     AppendMenuW(m, MF_STRING, TRAY_LOOK, Ui_Look()->enabled ? L"Color Engine: Active" : L"Color Engine: Bypassed");
     AppendMenuW(m, MF_STRING, TRAY_XH, x.on ? L"Hide Crosshair Overlay" : L"Show Crosshair Overlay");
     AppendMenuW(m, MF_STRING, TRAY_GAME_MODE, Tools_IsGamingMode() ? L"Gaming Mode: ON" : L"Gaming Mode: OFF");
+    if (Modes_PendingChange()) {
+        char label[64];
+        wchar_t wlabel[80];
+        Modes_PendingMode(label, sizeof label);
+        MultiByteToWideChar(CP_UTF8, 0, label, -1, wlabel, 80);
+        {
+            wchar_t line[160];
+            wsprintfW(line, L"Keep display mode %s  (%d s)", wlabel, Modes_PendingSecondsLeft());
+            AppendMenuW(m, MF_STRING, TRAY_KEEP_MODE, line);
+        }
+        AppendMenuW(m, MF_STRING, TRAY_REVERT_MODE, L"Revert display mode now");
+        AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+    }
     AppendMenuW(m, MF_STRING, TRAY_RESET, L"Reset All Display Colors");
     AppendMenuW(m, MF_STRING, TRAY_EMERGENCY, L"Emergency Safe Reset  (Ctrl+Alt+Shift+R)");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
@@ -546,37 +562,45 @@ static void tray_menu(void)
 /* ---------------- Global Hotkeys ---------------- */
 static void handle_hotkey(WPARAM id)
 {
-    Look *l = Ui_Look();
+    /* copy → edit → Eng_SetLook: the engine bumps its revision, so a hotkey that
+     * changes nothing is skipped and a hotkey that changes something always
+     * re-applies and re-verifies.  Never edit the authoritative state in place. */
+    Look l = *Eng_GetRequested();
     switch (id) {
     case 1: /* Saturation +10% */
-        l->sat = clampf(l->sat + 10.0f, 0, 300);
+        l.sat = clampf(l.sat + 10.0f, 0, 300);
         Ui_Notify(L"Saturation +10%");
         break;
     case 2: /* Saturation -10% */
-        l->sat = clampf(l->sat - 10.0f, 0, 300);
+        l.sat = clampf(l.sat - 10.0f, 0, 300);
         Ui_Notify(L"Saturation −10%");
         break;
     case 3: /* Reset ALL channels (R/G/B gain, black/white) and tone curves (gamma, shadows, highlights, clarity) */
-        *l = (Look)LOOK_NEUTRAL_INIT;
-        l->enabled = 1;
+        l = (Look)LOOK_NEUTRAL_INIT;
+        l.enabled = 1;
         Eng_Reset();
         Ui_Notify(L"All Channels & Tone Curves Reset to Neutral");
         break;
     case 4: /* Toggle Crosshair */
         Xh_Toggle();
         Ui_Notify(Xh_IsActive() ? L"Crosshair Overlay: Enabled" : L"Crosshair Overlay: Hidden");
-        break;
+        Ui_RebuildPanel();
+        InvalidateRect(g_hwnd, NULL, FALSE);
+        return;
     case 5: /* Toggle Look On/Off */
-        l->enabled = !l->enabled;
-        Ui_Notify(l->enabled ? L"Color Engine: Active" : L"Color Engine: Bypassed");
+        l.enabled = !l.enabled;
+        Ui_Notify(l.enabled ? L"Color Engine: Active" : L"Color Engine: Bypassed");
         break;
     case 6: /* Toggle Gaming Mode */
         Tools_ToggleGamingMode();
-        break;
+        Ui_RebuildPanel();
+        InvalidateRect(g_hwnd, NULL, FALSE);
+        return;
     case 7: /* Ctrl+Alt+Shift+R: emergency safe reset */
         Main_EmergencyReset();
         return;
     }
+    Eng_SetLook(&l);
     Ui_RebuildPanel();
     Main_ApplyAll();
     InvalidateRect(g_hwnd, NULL, FALSE);
@@ -705,6 +729,14 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             InvalidateRect(wnd, NULL, FALSE);
         } else if (wp == TIMER_POLL) {
             Wm_Tick();                   /* delayed game-profile applies */
+            /* Display safety: unconfirmed mode changes roll back on their own. */
+            if (Modes_RollbackTick()) {
+                Ui_Notify(L"Display change was not confirmed — the previous mode was restored");
+                Ui_RebuildPanel();
+                InvalidateRect(wnd, NULL, FALSE);
+            } else if (Modes_PendingChange()) {
+                InvalidateRect(wnd, NULL, FALSE);   /* repaint the countdown bar */
+            }
             /* Slow fallback only for missed WinEvents — never a color reapply loop. */
             if (++g_detect_tick >= 16) {
                 g_detect_tick = 0;
@@ -716,20 +748,50 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_APP_LOOK: {
+        /* remote slider edit (phone): one character per channel, value in lParam.
+         * Ranges are clamped HERE as well as in the engine, so no remote input
+         * can ever leave the domain the pipeline accepts. */
         char k = (char)wp;
         int v = (int)lp;
-        Look *l = Ui_Look();
+        /* copy → edit → Eng_SetLook: the revision bump happens inside the
+         * engine, so an edit that changes nothing does not cause a re-apply. */
+        Look l = *Eng_GetRequested();
         switch (k) {
-        case 's': l->sat = clampf((float)v, 0, 300); break;
-        case 'v': l->vibrance = clampf((float)v, 0, 300); break;
-        case 'b': l->bri = clampf((float)v, 0, 200); break;
-        case 'c': l->con = clampf((float)v, 0, 200); break;
-        case 't': l->temp = clampf((float)v, 3000, 10000); break;
-        case 'g': l->gamma = clampf(v / 100.0f, 0.40f, 2.50f); break;
+        case 's': l.sat = clampf((float)v, 0, 300); break;
+        case 'v': l.vibrance = clampf((float)v, 0, 300); break;
+        case 'b': l.bri = clampf((float)v, 0, 200); break;
+        case 'c': l.con = clampf((float)v, 0, 200); break;
+        case 't': l.temp = clampf((float)v, 3000, 10000); break;
+        case 'g': l.gamma = clampf(v / 100.0f, 0.40f, 2.50f); break;
+        case 'n': l.tint = clampf((float)v, -100, 100); break;
+        case 'h': l.hue = clampf((float)v, -180, 180); break;
+        case 'x': l.enabled = v ? 1 : 0; break;
+        default: return 0;
         }
+        Eng_SetLook(&l);
         Ui_RebuildPanel();
         Main_ApplyAll();
         InvalidateRect(wnd, NULL, FALSE);
+        return 0;
+    }
+    case WM_APP_PROFILE: {
+        /* remote profile switch: load the profile's active sub-mode as the
+         * complete requested look (same no-stacking path as detection). */
+        int idx = (int)wp;
+        Profile *p = Prof_Get(idx);
+        if (p) {
+            Prof_SetActiveIndex(idx);
+            Ui_LoadLook(&p->sub[p->active_sub].look);
+            Eng_SetMode(PX_CSMODE_GAME, idx, p->active_sub);
+            {
+                wchar_t msg[128];
+                wsprintfW(msg, L"%s: %s profile applied (remote)", p->name, p->sub[p->active_sub].name);
+                Ui_Notify(msg);
+            }
+            Ui_RebuildPanel();
+            Wm_ReassertNow(L"remote-profile");
+            InvalidateRect(wnd, NULL, FALSE);
+        }
         return 0;
     }
     case WM_APP_TRAY:
@@ -755,6 +817,16 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         case TRAY_GAME_MODE:
             Tools_ToggleGamingMode();
             break;
+        case TRAY_KEEP_MODE:
+            if (Modes_ConfirmPending()) Ui_Notify(L"Display mode kept");
+            Ui_RebuildPanel();
+            InvalidateRect(wnd, NULL, FALSE);
+            break;
+        case TRAY_REVERT_MODE:
+            if (Modes_RollbackPending()) Ui_Notify(L"Previous display mode restored");
+            Ui_RebuildPanel();
+            InvalidateRect(wnd, NULL, FALSE);
+            break;
         case TRAY_RESET:
             Ui_Exec(ID_B_RESET_COLOR);
             break;
@@ -762,6 +834,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             Main_EmergencyReset();
             break;
         case TRAY_EXIT:
+            g_force_quit = 1;
             PostMessageW(wnd, WM_CLOSE, 0, 0);
             break;
         default:
@@ -770,8 +843,20 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_CLOSE:
+        /* "Minimize to tray" means the X button hides the window; the tray menu
+         * (or a second WM_CLOSE from there) still exits. */
+        if (PxSetGetInt("ui", "minimize_tray", 0) && !g_force_quit) {
+            ShowWindow(wnd, SW_HIDE);
+            return 0;
+        }
         DestroyWindow(wnd);
         return 0;
+    case WM_SYSCOMMAND:
+        if ((wp & 0xFFF0) == SC_MINIMIZE && PxSetGetInt("ui", "minimize_tray", 0)) {
+            ShowWindow(wnd, SW_HIDE);
+            return 0;
+        }
+        break;
     case WM_DESTROY:
         tray_del();
         KillTimer(wnd, TIMER_POLL);
@@ -871,9 +956,25 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     /* Everything the first window messages (WM_CREATE, WM_SIZE, WM_PAINT, hit-testing) can touch
      * must exist BEFORE CreateWindowExW: display-mode / monitor enumeration, then the UI
      * (DPI scale, fonts, profiles, test-pattern class, widgets) and the saved look. */
+    Modes_SetStateDir(g_appdata);
     Modes_Refresh();
     Ui_Init(NULL, inst);
     load_current_config();
+
+    /* Engine startup policy: 0 = start bypassed, 1 = start enabled, 2 = restore
+     * exactly what was saved.  It only touches the requested enabled flag, so no
+     * value the user ever set is lost. */
+    {
+        int ss = PxSetGetInt("engine", "startup_state", 2);
+        if (ss == 0 || ss == 1) {
+            Look l = *Eng_GetRequested();
+            int want = (ss == 1) ? 1 : 0;
+            if (l.enabled != want) {
+                l.enabled = want;
+                Eng_SetLook(&l);
+            }
+        }
+    }
     Ui_RebuildPanel();          /* show the loaded look, not the built-in defaults */
 
     HWND created = CreateWindowExW(WS_EX_APPWINDOW, PX_CLASS, PX_APP_TITLE, WS_POPUP,
@@ -900,6 +1001,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
 
     SetTimer(g_hwnd, TIMER_POLL, TIMER_POLL_MS, NULL);
 
+    /* Phone remote: only when the user left it enabled. */
+    if (PxSetGetInt("phone", "enabled", 0)) {
+        if (Phone_Start() != 0)
+            Ui_Notify(L"The LAN phone remote could not bind port 8777");
+    }
+
     /* Register Global Hotkeys */
     RegisterHotKey(g_hwnd, 1, MOD_CONTROL | MOD_ALT, VK_UP);
     RegisterHotKey(g_hwnd, 2, MOD_CONTROL | MOD_ALT, VK_DOWN);
@@ -912,6 +1019,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
 
     Main_ApplyAll();
     Prof_SyncApplied(L"startup");
+
+    /* A mode change left unconfirmed by a previous session (crash, kill, power
+     * loss during the countdown) is put back the moment the UI exists to say so.
+     * The mode itself lives in the driver/registry, so nothing else can do this. */
+    if (Modes_RecoverPendingFromDisk())
+        Ui_Notify(L"An unconfirmed display mode from the last session was restored");
 
     /* Establish the initial foreground context once, through the same event path
      * an ALT+TAB uses — no sleep, no second code path at start-up. */

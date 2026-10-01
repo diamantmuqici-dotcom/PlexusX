@@ -25,6 +25,8 @@
 #include "../app/src/games/game_state.h"
 #include "../app/src/windows/window_state.h"
 #include "../app/src/settings/settings_store.h"
+#include "../app/src/presets/preset_store.h"
+#include "../app/src/display/display_capabilities.h"
 #include "../app/src/diagnostics/diagnostics.h"
 
 typedef unsigned short WORD;
@@ -1517,6 +1519,151 @@ static void test_diagnostics(void)
     printf("  [PASS] Diagnostics: ring log wraps + escaped JSON, applied outcome derived from hardware facts\n");
 }
 
+/* ---------------- 24. Unified preset library ---------------------------------
+ * The store is pure: seed, round-trip through the INI form and the JSON form,
+ * add / duplicate / rename / delete, and sanitising of hostile payloads. */
+static void test_preset_library(void)
+{
+    static PxPresetLib lib;
+    static char ini[65536];
+    static char jsn[131072];
+    int cat[PX_PRESET_CAT_COUNT] = { 0, 0, 0, 0 };
+    int n;
+
+    memset(&lib, 0, sizeof lib);
+    PxPre_SeedBuiltins(&lib);
+    CHECK(lib.n == 20);
+    for (int i = 0; i < lib.n; i++) {
+        CHECK(lib.p[i].builtin == 1);
+        CHECK(lib.p[i].category >= 0 && lib.p[i].category < PX_PRESET_CAT_COUNT);
+        CHECK(lib.p[i].name[0] != 0);
+        CHECK(lib.p[i].look.enabled == 1);
+        CHECK(lib.p[i].look.sat >= 0.0f && lib.p[i].look.sat <= 300.0f);
+        CHECK(lib.p[i].look.gamma >= 0.40f && lib.p[i].look.gamma <= 2.50f);
+        cat[lib.p[i].category]++;
+    }
+    CHECK(cat[PX_PRESET_GLOBAL] == 8);
+    CHECK(cat[PX_PRESET_DISPLAY] == 7);
+    CHECK(cat[PX_PRESET_CROSSHAIR] == 5);
+
+    /* INI form round trip */
+    n = PxPre_Serialize(&lib, ini, sizeof ini);
+    CHECK(n > 6000 && n < (int)sizeof ini);
+    static PxPresetLib lib2;
+    memset(&lib2, 0, sizeof lib2);
+    CHECK(PxPre_Parse(&lib2, ini) == lib.n);
+    CHECK(lib2.n == lib.n && lib2.schema == PX_PRESET_SCHEMA);
+    for (int i = 0; i < lib.n; i++) {
+        CHECK(!strcmp(lib2.p[i].name, lib.p[i].name));
+        CHECK(lib2.p[i].category == lib.p[i].category);
+        CHECK_NEAR(lib2.p[i].look.sat, lib.p[i].look.sat, 0.51);
+        CHECK(lib2.p[i].xh_size == lib.p[i].xh_size);
+        CHECK(lib2.p[i].disp_w == lib.p[i].disp_w && lib2.p[i].disp_hz == lib.p[i].disp_hz);
+    }
+
+    /* JSON form round trip (the import/export format) */
+    n = PxPre_ToJson(&lib, jsn, sizeof jsn);
+    CHECK(n > 10000);
+    static PxPresetLib lib3;
+    memset(&lib3, 0, sizeof lib3);
+    CHECK(PxPre_FromJson(&lib3, jsn) == lib.n);
+    for (int i = 0; i < lib.n; i++) {
+        CHECK(!strcmp(lib3.p[i].name, lib.p[i].name));
+        CHECK_NEAR(lib3.p[i].look.sat, lib.p[i].look.sat, 0.51);
+        CHECK_NEAR(lib3.p[i].look.gamma, lib.p[i].look.gamma, 0.0011);
+        CHECK(lib3.p[i].category == lib.p[i].category);
+    }
+
+    /* user presets: add with a hostile payload, then duplicate / rename / delete */
+    {
+        PxPreset ps;
+        int idx, dup;
+        PxPreset_Neutral(&ps);
+        snprintf(ps.name, PX_PRESET_NAME, "Test Preset");
+        ps.category = PX_PRESET_GLOBAL;
+        ps.look.sat = 100000.0f;          /* absurd input must be clamped      */
+        ps.look.gamma = 0.0f;
+        ps.xh_size = 9000;
+        ps.disp_hz = 100000;
+        PxPreset_Sanitize(&ps);
+        CHECK(ps.look.sat <= 300.0f && ps.look.gamma >= 0.40f);
+        CHECK(ps.xh_size >= 4 && ps.xh_size <= 64);
+        CHECK(ps.category == PX_PRESET_GLOBAL);
+        idx = PxPre_Add(&lib3, &ps);
+        CHECK(idx == lib.n);
+        CHECK(PxPre_Find(&lib3, "Test Preset", PX_PRESET_GLOBAL) == idx);
+        dup = PxPre_Duplicate(&lib3, idx, NULL);
+        CHECK(dup == idx + 1);
+        CHECK(strcmp(lib3.p[dup].name, "Test Preset") != 0);       /* auto-suffixed */
+        CHECK(PxPre_Rename(&lib3, dup, "Renamed") == 0);
+        CHECK(!strcmp(lib3.p[dup].name, "Renamed"));
+        CHECK(PxPre_Delete(&lib3, dup) == 0);
+        CHECK(lib3.n == idx + 1);
+        CHECK(PxPre_Find(&lib3, "Renamed", PX_PRESET_GLOBAL) < 0);
+    }
+
+    /* garbage input parses to nothing, which is what makes the store fall back */
+    {
+        PxPresetLib g;
+        memset(&g, 0, sizeof g);
+        CHECK(PxPre_Parse(&g, "not an ini\n[[[") == 0);
+        CHECK(g.n == 0);
+        memset(&g, 0, sizeof g);
+        CHECK(PxPre_FromJson(&g, "{ this is not json") == 0);
+        CHECK(g.n == 0);
+    }
+
+    printf("  [PASS] Preset library: 20 seed presets x INI + JSON round trip, CRUD, hostile-input clamping\n");
+}
+
+/* ---------------- 25. Display capabilities: HDR derivation ------------------ */
+static void test_display_capabilities(void)
+{
+    MonitorInfo m;
+    PxCapSummary cap;
+
+    memset(&m, 0, sizeof m);
+    m.bpc = 8;
+    m.color_space_raw = 0x00;
+    CHECK(PxHdr_StateOf(NULL) == PX_HDR_DISABLED);
+    CHECK(PxHdr_StateOf(&m) == PX_HDR_DISABLED);
+    CHECK(strstr(PxHdr_Name(PX_HDR_DISABLED), "DISABLED") != NULL);
+    CHECK(PxHdr_Explain(PX_HDR_DISABLED)[0] != 0);
+
+    /* HDR capable but running SDR: LIMITED, and the full pipeline still applies */
+    m.hdr_capable = 1;
+    CHECK(PxHdr_StateOf(&m) == PX_HDR_LIMITED);
+    PxCap_Fill(&cap, &m, 1, 1, 0);
+    CHECK(cap.hdr_state == PX_HDR_LIMITED && cap.hdr_capable == 1);
+    CHECK(cap.bpc == 8 && cap.color_space == 0x00);
+    CHECK(cap.linear_path == 1 && cap.curves_path == 1);
+    CHECK(PxHdr_Tone(cap.hdr_state) == 2);
+
+    /* HDR actually running: PASSTHROUGH, and the engine writes nothing */
+    m.hdr_enabled = 1;
+    m.color_space_raw = 0x0c;
+    m.max_nits = 1000.0f;
+    m.max_full_frame_nits = 600.0f;
+    CHECK(PxHdr_StateOf(&m) == PX_HDR_ENABLED);
+    PxCap_Fill(&cap, &m, 1, 1, 0);
+    CHECK(cap.hdr_state == PX_HDR_ENABLED);
+    CHECK_NEAR(cap.max_nits, 1000.0f, 1e-3);
+    CHECK_NEAR(cap.max_ff_nits, 600.0f, 1e-3);
+    CHECK(PxHdr_Explain(PX_HDR_ENABLED)[0] != 0);
+
+    /* not-reported facts stay not-reported (no invented values) */
+    memset(&m, 0, sizeof m);
+    m.color_space_raw = PX_CS_UNKNOWN;      /* what the collector writes when DXGI says nothing */
+    PxCap_Fill(&cap, &m, 0, 0, 1);
+    CHECK(cap.bpc == 0 && cap.color_space == PX_CS_UNKNOWN);
+    CHECK(cap.hdr_state == PX_HDR_DISABLED && cap.hdr_capable == 0);
+    CHECK(cap.min_nits == 0.0f && cap.max_nits == 0.0f);
+    CHECK(cap.exclusive_blocked == 1 && cap.linear_path == 0 && cap.curves_path == 0);
+    CHECK(cap.monitor_index == -1 && cap.is_primary == 0);
+
+    printf("  [PASS] Display capabilities: HDR DISABLED / LIMITED / ENABLED derivation, honest unknowns\n");
+}
+
 int main(void)
 {
     printf("\n=== PlexusX Automated Verification Test Suite ===\n");
@@ -1543,7 +1690,9 @@ int main(void)
     test_settings_store();
     test_profile_store();
     test_diagnostics();
+    test_preset_library();
+    test_display_capabilities();
     printf("==================================================\n");
-    printf("ALL 23 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
+    printf("ALL 25 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
     return 0;
 }

@@ -126,3 +126,41 @@ BOOL CloseHandle(HANDLE h) { return close((int)(intptr_t)h) == 0; }
 BOOL DeleteFileW(const wchar_t *path) { char p[1024]; narrow(path, p, sizeof p); return unlink(p) == 0; }
 BOOL FlushFileBuffers(HANDLE h) { return fsync((int)(intptr_t)h) == 0; }
 BOOL MoveFileExW(const wchar_t *a, const wchar_t *b, DWORD f) { (void)f; char pa[1024], pb[1024]; narrow(a, pa, sizeof pa); narrow(b, pb, sizeof pb); return rename(pa, pb) == 0; }
+
+/* ---- DisplayState / GameDisplayState facts ---------------------------------
+ * The engine reads these through its normal interface; the host harness makes
+ * them settable so HDR / exclusive-fullscreen / desktop cases can be driven. */
+MockFacts g_mock_facts;
+
+void MockFacts_Reset(void)
+{
+    memset(&g_mock_facts, 0, sizeof g_mock_facts);
+    g_mock_facts.monitor_count = 1;
+    g_mock_facts.current_monitor = 0;
+    {
+        const wchar_t *f = L"Mock Panel";
+        const wchar_t *d = L"\\\\DISPLAY1";
+        size_t i;
+        for (i = 0; f[i] && i < 63; i++) g_mock_facts.mon[0].friendly[i] = f[i];
+        g_mock_facts.mon[0].friendly[i] = 0;
+        for (i = 0; d[i] && i < 31; i++) g_mock_facts.mon[0].dev_name[i] = d[i];
+        g_mock_facts.mon[0].dev_name[i] = 0;
+    }
+    g_mock_facts.mon[0].is_primary = 1;
+    g_mock_facts.mon[0].current_w = 1920;
+    g_mock_facts.mon[0].current_h = 1080;
+    g_mock_facts.mon[0].current_hz = 144;
+    g_mock_facts.mon[0].bpc = 8;
+    g_mock_facts.mon[0].color_space_raw = 0x00;   /* sRGB */
+    PxGDS_Init(&g_mock_facts.game);
+}
+
+int Modes_MonitorCount(void) { return g_mock_facts.monitor_count; }
+MonitorInfo *Modes_GetMonitor(int i)
+{
+    if (i < 0 || i >= g_mock_facts.monitor_count) return NULL;
+    return &g_mock_facts.mon[i];
+}
+int Modes_CurrentMonitorIndex(void) { return g_mock_facts.current_monitor; }
+int Dm_HdrAny(void) { return g_mock_facts.hdr_any; }
+const PxGameDisplayState *Prof_GameState(void) { return &g_mock_facts.game; }
