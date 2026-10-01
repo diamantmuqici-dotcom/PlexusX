@@ -458,7 +458,25 @@ int Tools_ExportDiagnostics(const wchar_t *filepath)
     fwprintf(f, L"  },\n");
     fwprintf(f, L"  \"monitors_count\": %d,\n", Modes_MonitorCount());
     fwprintf(f, L"  \"crosshair_active\": %ls,\n", Xh_IsActive() ? L"true" : L"false");
-    fwprintf(f, L"  \"phone_control_active\": %ls\n", Phone_IsRunning() ? L"true" : L"false");
+    fwprintf(f, L"  \"phone_control_active\": %ls,\n", Phone_IsRunning() ? L"true" : L"false");
+    {
+        const Look *req = Eng_GetRequested();
+        const Look *app = Eng_GetApplied();
+        fwprintf(f, L"  \"pipeline\": {\n");
+        fwprintf(f, L"    \"last_invalidate\": \"%ls\",\n", Eng_LastInvalidateReason());
+        fwprintf(f, L"    \"in_sync\": %ls,\n", Eng_RequestedMatchesApplied() ? L"true" : L"false");
+        if (req) {
+            fwprintf(f, L"    \"requested_vibrance\": %.1f,\n", req->vibrance);
+            fwprintf(f, L"    \"requested_saturation\": %.1f,\n", req->sat);
+        }
+        if (app) {
+            fwprintf(f, L"    \"applied_vibrance\": %.1f,\n", app->vibrance);
+            fwprintf(f, L"    \"applied_saturation\": %.1f\n", app->sat);
+        } else {
+            fwprintf(f, L"    \"applied_vibrance\": null\n");
+        }
+        fwprintf(f, L"  }\n");
+    }
     fwprintf(f, L"}\n");
 
     fclose(f);

@@ -10,7 +10,7 @@ CC      := python3 -m ziglang cc
 CFLAGS  ?= -target x86_64-windows-gnu -O2 -std=c11 -Wall \
            -DUNICODE -D_UNICODE -D_CRT_SECURE_NO_WARNINGS -municode
 LDFLAGS ?= -Wl,--subsystem,windows
-LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomctl32 -lshlwapi -lm
+LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomctl32 -lshlwapi -ldwmapi -lwtsapi32 -lm
 SRC     := $(wildcard src/*.c)
 HDR     := $(wildcard src/*.h)
 OUT_DIR := ../site/download

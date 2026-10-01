@@ -5,6 +5,16 @@
 #include "color_math.h"
 #include <shlobj.h>
 #include <signal.h>
+#include <dwmapi.h>
+#include <wtsapi32.h>
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#define DWMWCP_ROUND 2
+#endif
 
 HWND      g_hwnd = NULL;
 HINSTANCE g_inst = NULL;
@@ -14,9 +24,13 @@ wchar_t   g_appdata[MAX_PATH];
 static wchar_t g_exepath[MAX_PATH];
 static wchar_t g_rampsfile[MAX_PATH];
 static wchar_t g_dirtyfile[MAX_PATH];
-static int     g_reapply_tick = 0;
+static int     g_detect_tick = 0;
+static HWINEVENTHOOK g_fg_hook = NULL;
+
+static int startup_enabled(void);
 
 #define TIMER_POLL 1
+#define TIMER_POLL_MS 250
 
 /* Tray IDs */
 #define TRAY_ID        1
@@ -332,6 +346,12 @@ static void save_current_config(void)
     wsprintfW(b, L"%d", (int)l->black_level); WritePrivateProfileStringW(L"current", L"black_level", b, f);
     wsprintfW(b, L"%d", (int)l->white_point); WritePrivateProfileStringW(L"current", L"white_point", b, f);
     wsprintfW(b, L"%d", (int)l->clarity);     WritePrivateProfileStringW(L"current", L"clarity", b, f);
+    wsprintfW(b, L"%d", (int)l->hue);         WritePrivateProfileStringW(L"current", L"hue", b, f);
+
+    wsprintfW(b, L"%d", Ui_GlassEnabled());   WritePrivateProfileStringW(L"ui", L"glass", b, f);
+    wsprintfW(b, L"%d", Ui_BgMode());         WritePrivateProfileStringW(L"ui", L"bg", b, f);
+    wsprintfW(b, L"%d", Ui_ReduceMotion());   WritePrivateProfileStringW(L"ui", L"reduce_motion", b, f);
+    wsprintfW(b, L"%d", Ui_AnimLevel());      WritePrivateProfileStringW(L"ui", L"anim", b, f);
 
     XhCfg x;
     Ui_GetXh(&x);
@@ -367,9 +387,16 @@ static void load_current_config(void)
     l.black_level = (float)GetPrivateProfileIntW(L"current", L"black_level", 100, f);
     l.white_point = (float)GetPrivateProfileIntW(L"current", L"white_point", 100, f);
     l.clarity = (float)GetPrivateProfileIntW(L"current", L"clarity", 100, f);
-    l.hue = 0.0f;
+    l.hue = (float)GetPrivateProfileIntW(L"current", L"hue", 0, f);
     cm_sanitize_look(&l);      /* a hand-edited or corrupt config can never feed NaN / absurd values to the engine */
     Ui_LoadLook(&l);
+
+    Ui_LoadAppearance(
+        GetPrivateProfileIntW(L"ui", L"glass", 1, f),
+        GetPrivateProfileIntW(L"ui", L"bg", 1, f),
+        GetPrivateProfileIntW(L"ui", L"reduce_motion", 0, f),
+        GetPrivateProfileIntW(L"ui", L"anim", 2, f),
+        startup_enabled());
 
     XhCfg x;
     Ui_GetXh(&x);
@@ -402,6 +429,78 @@ void Main_ApplyAll(void)
     Xh_Update(&x);
 
     Phone_SetLook(l);
+}
+
+void Main_SetStartup(int on)
+{
+    HKEY k;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_SET_VALUE, &k) != ERROR_SUCCESS)
+        return;
+    if (on) {
+        RegSetValueExW(k, L"PlexusX", 0, REG_SZ, (const BYTE *)g_exepath,
+                       (DWORD)((lstrlenW(g_exepath) + 1) * sizeof(wchar_t)));
+    } else {
+        RegDeleteValueW(k, L"PlexusX");
+    }
+    RegCloseKey(k);
+}
+
+static int startup_enabled(void)
+{
+    HKEY k;
+    wchar_t v[MAX_PATH];
+    DWORD sz = sizeof v, type = 0;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS)
+        return 0;
+    LONG r = RegQueryValueExW(k, L"PlexusX", NULL, &type, (LPBYTE)v, &sz);
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS;
+}
+
+void Main_ApplyChrome(void)
+{
+    if (!g_hwnd) return;
+
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(g_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof dark);
+    int corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(g_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof corner);
+
+    LONG_PTR ex = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
+    if (Ui_GlassEnabled()) {
+        SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        BYTE alpha = Ui_ReduceMotion() ? (BYTE)252 : (BYTE)242;
+        SetLayeredWindowAttributes(g_hwnd, 0, alpha, LWA_ALPHA);
+        DWM_BLURBEHIND bb;
+        memset(&bb, 0, sizeof bb);
+        bb.dwFlags = DWM_BB_ENABLE;
+        bb.fEnable = TRUE;
+        DwmEnableBlurBehindWindow(g_hwnd, &bb);
+    } else {
+        SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, ex & ~(LONG_PTR)WS_EX_LAYERED);
+        DWM_BLURBEHIND bb;
+        memset(&bb, 0, sizeof bb);
+        bb.dwFlags = DWM_BB_ENABLE;
+        bb.fEnable = FALSE;
+        DwmEnableBlurBehindWindow(g_hwnd, &bb);
+    }
+}
+
+static void pipeline_reassert(const wchar_t *why)
+{
+    Eng_Invalidate(why);
+    Main_ApplyAll();
+}
+
+static void CALLBACK fg_event(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
+                             LONG id_obj, LONG id_child, DWORD tid, DWORD time)
+{
+    (void)hook; (void)event; (void)hwnd; (void)id_obj; (void)id_child; (void)tid; (void)time;
+    if (g_hwnd) PostMessageW(g_hwnd, WM_APP_FOREGROUND, 0, 0);
 }
 
 /* Ctrl+Alt+Shift+R / tray / Tools panel: the "get my screen back" button.
@@ -525,9 +624,34 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (Ui_IsReady()) InvalidateRect(wnd, NULL, FALSE);
         return 0;
     case WM_DISPLAYCHANGE:
-        /* A mode change resets the display pipeline on many drivers: re-assert the look */
-        Eng_Resync();
-        Main_ApplyAll();
+        Modes_Refresh();
+        pipeline_reassert(L"display-change");
+        if (Ui_IsReady()) { Ui_RebuildPanel(); InvalidateRect(wnd, NULL, FALSE); }
+        return 0;
+    case WM_ACTIVATEAPP:
+        /* ALT+TAB / focus regain: DWM often drops MagSetFullscreenColorEffect.
+         * Reassert REQUESTED state; never rewrite the user's sliders from GPU readout. */
+        if (wp) pipeline_reassert(L"activate-app");
+        return 0;
+    case WM_WTSSESSION_CHANGE:
+        if (wp == WTS_SESSION_UNLOCK || wp == WTS_CONSOLE_CONNECT || wp == WTS_SESSION_LOGON)
+            pipeline_reassert(L"session");
+        return 0;
+    case WM_POWERBROADCAST:
+        if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND)
+            pipeline_reassert(L"resume");
+        return TRUE;
+    case WM_DEVICECHANGE:
+        Modes_Refresh();
+        pipeline_reassert(L"device-change");
+        return TRUE;
+    case WM_APP_FOREGROUND:
+        Prof_Poll();
+        pipeline_reassert(L"foreground");
+        if (Ui_IsReady() && g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+        return 0;
+    case WM_APP_PIPELINE:
+        pipeline_reassert(L"pipeline");
         return 0;
     case WM_NCHITTEST: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -567,6 +691,23 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (r < 0) InvalidateRect(wnd, NULL, FALSE);
         return 0;
     }
+    case WM_LBUTTONDBLCLK:
+        if (Ui_DoubleClick(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)))
+            InvalidateRect(wnd, NULL, FALSE);
+        return 0;
+    case WM_MOUSEWHEEL: {
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        ScreenToClient(wnd, &pt);
+        if (Ui_Wheel((int)pt.x, (int)pt.y, GET_WHEEL_DELTA_WPARAM(wp)))
+            InvalidateRect(wnd, NULL, FALSE);
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (Ui_Key((int)wp,
+                   (GetKeyState(VK_CONTROL) & 0x8000) != 0,
+                   (GetKeyState(VK_SHIFT) & 0x8000) != 0))
+            InvalidateRect(wnd, NULL, FALSE);
+        return 0;
     case WM_LBUTTONUP:
         ReleaseCapture();
         Ui_MouseUp(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
@@ -588,13 +729,15 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_TIMER:
         if (wp == TIMER_POLL) {
-            Prof_Poll();
-            if (++g_reapply_tick >= 60) {
-                g_reapply_tick = 0;
-                Eng_Resync();          /* the driver / a game may have reset the LUT behind our back */
-                Main_ApplyAll();
+            Prof_TickPending();
+            /* Slow fallback only for missed WinEvent game launches — never a color reapply loop. */
+            if (++g_detect_tick >= 16) {
+                g_detect_tick = 0;
+                if (Prof_Poll()) {
+                    pipeline_reassert(L"detect-fallback");
+                    InvalidateRect(wnd, NULL, FALSE);
+                }
             }
-            InvalidateRect(wnd, NULL, FALSE);
         }
         return 0;
     case WM_APP_LOOK: {
@@ -657,6 +800,8 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         tray_del();
         KillTimer(wnd, TIMER_POLL);
+        if (g_fg_hook) { UnhookWinEvent(g_fg_hook); g_fg_hook = NULL; }
+        WTSUnRegisterSessionNotification(wnd);
         Main_Save();
         Phone_Stop();
         Xh_Shutdown();
@@ -752,7 +897,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     load_current_config();
     Ui_RebuildPanel();          /* show the loaded look, not the built-in defaults */
 
-    HWND created = CreateWindowExW(0, PX_CLASS, PX_APP_TITLE, WS_POPUP,
+    HWND created = CreateWindowExW(WS_EX_APPWINDOW, PX_CLASS, PX_APP_TITLE, WS_POPUP,
                                    sx, sy, ww, wh, NULL, NULL, inst, NULL);
     if (!created) {
         Eng_Shutdown();
@@ -767,7 +912,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     UpdateWindow(g_hwnd);
 
     tray_add(g_hwnd);
-    SetTimer(g_hwnd, TIMER_POLL, 1000, NULL);
+    Main_ApplyChrome();
+    WTSRegisterSessionNotification(g_hwnd, NOTIFY_FOR_THIS_SESSION);
+    g_fg_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+                                NULL, fg_event, 0, 0, WINEVENT_OUTOFCONTEXT);
+    SetTimer(g_hwnd, TIMER_POLL, TIMER_POLL_MS, NULL);
 
     /* Register Global Hotkeys */
     RegisterHotKey(g_hwnd, 1, MOD_CONTROL | MOD_ALT, VK_UP);

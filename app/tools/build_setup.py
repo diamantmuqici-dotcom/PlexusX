@@ -35,7 +35,7 @@ def main():
 
     print("Compiling Setup executable...")
     cmd = [
-        "python3", "-m", "ziglang", "cc",
+        sys.executable, "-m", "ziglang", "cc",
         "-target", "x86_64-windows-gnu",
         "-O2", "-std=c11", "-Wall",
         "-DUNICODE", "-D_UNICODE", "-D_CRT_SECURE_NO_WARNINGS", "-municode",

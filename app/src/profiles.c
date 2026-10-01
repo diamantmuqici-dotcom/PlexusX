@@ -17,6 +17,8 @@ static wchar_t g_current_fg[96] = { 0 };
 
 static Look    g_saved_pre_game_look;
 static int     g_has_pre_game_look = 0;
+static int     g_pending_idx = -1;
+static DWORD   g_pending_due = 0;
 
 /* ---------------- Preset Scenes / Looks ---------------- */
 static const SceneDef g_scenes[] = {
@@ -585,25 +587,51 @@ int  Prof_GetAutoRestore(void)   { return g_auto_restore; }
 void Prof_SetDelayMs(int ms)     { g_delay_ms = clampi(ms, 0, 3000); }
 int  Prof_GetDelayMs(void)       { return g_delay_ms; }
 
-/* ---------------- Safe Foreground Polling ---------------- */
-void Prof_Poll(void)
+/* Load a complete look snapshot (never stacked on the previous one).
+ * Hardware apply is left to the caller so ALT+TAB / focus events own the pipeline. */
+static void load_game_idx(int idx)
 {
-    if (!g_detect) return;
+    if (idx < 0 || idx >= g_nprofiles) return;
+    Profile *p = &g_profiles[idx];
+    g_active_profile = idx;
+    Ui_LoadLook(&p->sub[p->active_sub].look);
+    wchar_t msg[128];
+    wsprintfW(msg, L"%s: %s profile applied", p->name, p->sub[p->active_sub].name);
+    Ui_Notify(msg);
+    Ui_RebuildPanel();
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+void Prof_TickPending(void)
+{
+    if (g_pending_idx < 0) return;
+    if ((LONG)(GetTickCount() - g_pending_due) < 0) return;
+    int idx = g_pending_idx;
+    g_pending_idx = -1;
+    load_game_idx(idx);
+    Eng_Invalidate(L"game-profile-delayed");
+    Main_ApplyAll();
+}
+
+/* ---------------- Foreground matching (event-driven; also safe to call from a slow fallback) ---------------- */
+int Prof_Poll(void)
+{
+    if (!g_detect) return 0;
     HWND fg = GetForegroundWindow();
-    if (!fg) return;
+    if (!fg) return 0;
 
     DWORD pid = 0;
     GetWindowThreadProcessId(fg, &pid);
-    if (!pid || pid == GetCurrentProcessId()) return;
+    if (!pid || pid == GetCurrentProcessId()) return 0;
 
     HANDLE hp = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!hp) return;
+    if (!hp) return 0;
 
     wchar_t path[MAX_PATH * 2];
     DWORD len = MAX_PATH * 2;
     BOOL ok = QueryFullProcessImageNameW(hp, 0, path, &len);
     CloseHandle(hp);
-    if (!ok) return;
+    if (!ok) return 0;
 
     const wchar_t *base = path;
     for (const wchar_t *p = path; *p; p++) {
@@ -611,7 +639,7 @@ void Prof_Poll(void)
     }
 
     lstrcpynW(g_current_fg, base, 96);
-    if (_wcsicmp(base, g_last_exe) == 0) return;
+    if (_wcsicmp(base, g_last_exe) == 0) return 0;
 
     int old_idx = Prof_FindExe(g_last_exe);
     int new_idx = Prof_FindExe(base);
@@ -627,25 +655,25 @@ void Prof_Poll(void)
 
         Profile *p = &g_profiles[new_idx];
         if (p->auto_apply) {
-            if (g_delay_ms > 0) Sleep(g_delay_ms);
-            g_active_profile = new_idx;
-            Ui_LoadLook(&p->sub[p->active_sub].look);
-            wchar_t msg[128];
-            wsprintfW(msg, L"%s: %s profile applied", p->name, p->sub[p->active_sub].name);
-            Ui_Notify(msg);
-            Eng_Resync();           /* a game taking the screen may have reset the LUT */
-            Main_ApplyAll();
-            InvalidateRect(g_hwnd, NULL, FALSE);
+            if (g_delay_ms > 0) {
+                g_pending_idx = new_idx;
+                g_pending_due = GetTickCount() + (DWORD)g_delay_ms;
+                return 0;
+            }
+            load_game_idx(new_idx);
+            return 1;
         }
     } else if (old_idx >= 0 && g_auto_restore && g_has_pre_game_look) {
-        /* Game exited: restore display */
+        g_pending_idx = -1;
+        /* Game exited: restore the pre-game snapshot (not a stacked transform). */
         Ui_LoadLook(&g_saved_pre_game_look);
         g_has_pre_game_look = 0;
         Ui_Notify(L"Desktop display profile restored");
-        Eng_Resync();               /* the game's exit may have reset the LUT */
-        Main_ApplyAll();
-        InvalidateRect(g_hwnd, NULL, FALSE);
+        Ui_RebuildPanel();
+        if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+        return 1;
     }
+    return 0;
 }
 
 /* ---------------- JSON Profile Schema Export & Import ---------------- */

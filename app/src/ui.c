@@ -33,6 +33,13 @@ static int     g_hover_widget = 0;
 static int     g_drag_split = 0;
 static float   g_split_pos = 0.50f; /* 0.0 to 1.0 for Before/After preview */
 
+static int     g_glass = 1;
+static int     g_bg_mode = 1;       /* 0 none, 1 abstract, 2 image */
+static int     g_reduce_motion = 0;
+static int     g_anim_level = 2;    /* 0 off, 1 reduced, 2 on */
+static int     g_startup = 0;
+static HBITMAP g_bg_bmp = NULL;
+
 static wchar_t g_toast[128];
 static DWORD   g_toast_time = 0;
 static wchar_t g_game_filter[64] = { 0 };
@@ -107,53 +114,73 @@ static void build_topbar(void)
 /* ---------------- 1. HOME DASHBOARD ---------------- */
 static void build_panel_home(void)
 {
-    wadd(WT_HEAD, 0, 248, 80, 500, 36, L"Gaming Display Dashboard");
-    wadd(WT_LABEL, 0, 248, 118, 600, 20, L"Active foreground status, display parameters & instant game tuning");
+    wadd(WT_HEAD, 0, 248, 70, 520, 34, L"Command Center");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Requested look is independent of GPU state. Focus regain reasserts it.");
 
-    /* Active Game Card */
-    Widget *gcard = wadd(WT_CARD, 0, 248, 150, 480, 100, L"CURRENT FOREGROUND");
     Profile *p = Prof_Get(Prof_ActiveIndex());
+    Widget *gcard = wadd(WT_CARD, 0, 248, 130, 400, 86, L"CURRENT GAME");
     if (p) {
         wsprintfW(gcard->val, L"%s", p->name);
-        wsprintfW(gcard->sub, L"Active Profile: %s  ·  %s", p->sub[p->active_sub].name, p->tag);
+        wsprintfW(gcard->sub, L"%s  ·  %s", p->sub[p->active_sub].name, p->tag);
     } else {
-        lstrcpyW(gcard->val, L"Desktop Environment");
-        lstrcpyW(gcard->sub, L"Default Display Profile Active");
+        lstrcpyW(gcard->val, L"Desktop");
+        lstrcpyW(gcard->sub, L"No game profile selected");
     }
 
-    /* Display Hardware Card */
-    Widget *dcard = wadd(WT_CARD, 0, 744, 150, 490, 100, L"ACTIVE DISPLAY HARDWARE");
     ModeInfo cur;
     Modes_Current(&cur);
     const GpuInfo *gpu = Eng_GetGpuInfo();
+    Widget *dcard = wadd(WT_CARD, 0, 660, 130, 280, 86, L"GPU / DISPLAY");
     wsprintfW(dcard->val, L"%d × %d @ %d Hz", cur.w, cur.h, cur.hz);
-    wsprintfW(dcard->sub, L"%s  ·  %s", gpu->vendor_name, cur.native ? L"Native Resolution" : L"Custom Stretched");
+    wsprintfW(dcard->sub, L"%s", gpu->name[0] ? gpu->name : gpu->vendor_name);
 
-    /* Quick Color Stats Card */
-    Widget *scard = wadd(WT_CARD, 0, 248, 266, 986, 76, L"ACTIVE COLOR PROFILE ENGINE");
-    wsprintfW(scard->val, L"Sat: %d%%   Vib: %d%%   Bri: %d%%   Con: %d%%   Gamma: %.2f   Temp: %dK",
-              (int)g_look.sat, (int)g_look.vibrance, (int)g_look.bri, (int)g_look.con, g_look.gamma, (int)g_look.temp);
-    lstrcpyW(scard->sub, g_look.enabled ? L"● Engine Active · Magnification API + GPU Gamma Ramps" : L"○ Engine Bypassed (Neutral Display)");
+    const Look *req = Eng_GetRequested();
+    const Look *app = Eng_GetApplied();
+    Widget *scard = wadd(WT_CARD, 0, 952, 130, 282, 86, L"PIPELINE");
+    if (req && app && Eng_RequestedMatchesApplied()) {
+        wsprintfW(scard->val, L"In sync");
+        wsprintfW(scard->sub, L"Vib %d%%  ·  %s", (int)req->vibrance, Eng_LastInvalidateReason());
+    } else if (req) {
+        wsprintfW(scard->val, L"Reasserting");
+        wsprintfW(scard->sub, L"Requested vib %d%%", (int)req->vibrance);
+    } else {
+        lstrcpyW(scard->val, L"Idle");
+        lstrcpyW(scard->sub, L"Engine has not applied yet");
+    }
 
-    /* Quick Actions */
-    wadd(WT_DIV, 0, 248, 356, 986, 24, L"ONE-CLICK QUICK MODES");
-    wadd(WT_PRIMARY, ID_B_HOME_COMPETITIVE, 248, 386, 150, 40, L"Competitive");
-    wadd(WT_GHOST,   ID_B_HOME_MAX_VIB,     408, 386, 150, 40, L"300% Vibrance");
-    wadd(WT_GHOST,   ID_B_HOME_NIGHT_VIS,   568, 386, 150, 40, L"Night Visibility");
-    wadd(WT_GHOST,   ID_B_HOME_CINEMATIC,   728, 386, 140, 40, L"Cinematic");
-    wadd(WT_GHOST,   ID_B_HOME_NATURAL,     878, 386, 130, 40, L"Natural");
-    wadd(WT_ACCENT,  ID_B_RESET_COLOR,     1018, 386, 116, 40, L"Reset All");
+    Widget *en = wadd(WT_TOGGLE, ID_T_LOOK_ENABLE, 248, 228, 260, 32, L"Color Engine");
+    en->state = g_look.enabled;
 
-    /* Live Visual Preview (Before / After Split) */
-    wadd(WT_DIV, 0, 248, 442, 986, 24, L"LIVE VISUAL PREVIEW  (DRAG DIVIDER TO COMPARE)");
-    wadd(WT_SPLIT_PREVIEW, 0, 248, 472, 986, 260, NULL);
+    wadd(WT_PRIMARY, ID_B_HOME_APPLY_GAME, 520, 226, 200, 36, L"Apply Game Preset");
+    wadd(WT_GHOST,   ID_B_RESET_EFFECT,    732, 226, 160, 36, L"Reset Effect");
+    wadd(WT_ACCENT,  ID_B_RESET_COLOR,     904, 226, 160, 36, L"Reset All");
+    wadd(WT_GHOST,   ID_B_EMERGENCY_RESET, 1076, 226, 158, 36, L"Safe Reset");
 
-    /* Bottom quick toggles */
-    Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 248, 746, 220, 36,
-                          Tools_IsGamingMode() ? L"★ Gaming Mode: ACTIVE" : L"☆ Gaming Mode: OFF");
+    Widget *s1 = wadd(WT_SLIDER, ID_SL_VIB, 248, 274, 480, 62, L"Vibrance");
+    set_slider(s1, g_look.vibrance, 0, 300, L"%");
+    Widget *s2 = wadd(WT_SLIDER, ID_SL_SAT, 744, 274, 490, 62, L"Saturation");
+    set_slider(s2, g_look.sat, 0, 300, L"%");
+    Widget *s3 = wadd(WT_SLIDER, ID_SL_BRI, 248, 338, 310, 62, L"Brightness");
+    set_slider(s3, g_look.bri, 0, 200, L"%");
+    Widget *s4 = wadd(WT_SLIDER, ID_SL_CON, 574, 338, 310, 62, L"Contrast");
+    set_slider(s4, g_look.con, 0, 200, L"%");
+    Widget *s5 = wadd(WT_SLIDER, ID_SL_GAMMA, 900, 338, 334, 62, L"Gamma");
+    set_slider(s5, g_look.gamma, 0.40f, 2.50f, L"gamma");
+
+    wadd(WT_DIV, 0, 248, 406, 986, 20, L"LIVE PREVIEW  ·  SAME MATH AS THE DISPLAY PIPELINE  ·  DRAG TO COMPARE");
+    wadd(WT_SPLIT_PREVIEW, 0, 248, 428, 986, 248, NULL);
+
+    wadd(WT_GHOST, ID_B_HOME_COMPETITIVE, 248, 688, 140, 36, L"Competitive");
+    wadd(WT_GHOST, ID_B_HOME_MAX_VIB,     398, 688, 150, 36, L"Max Vibrance");
+    wadd(WT_GHOST, ID_B_HOME_NIGHT_VIS,   558, 688, 150, 36, L"Night Ops");
+    wadd(WT_GHOST, ID_B_HOME_CINEMATIC,   718, 688, 130, 36, L"Cinematic");
+    wadd(WT_GHOST, ID_B_HOME_NATURAL,     858, 688, 120, 36, L"Natural");
+    Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 990, 688, 244, 36,
+                          Tools_IsGamingMode() ? L"Gaming Mode ON" : L"Gaming Mode OFF");
     gm_btn->flags = Tools_IsGamingMode() ? 1 : 0;
-    wadd(WT_GHOST, ID_B_BACKUP_NOW, 480, 746, 200, 36, L"Backup Display State");
-    wadd(WT_PRIMARY, ID_B_HOME_APPLY_GAME, 692, 746, 240, 36, L"Apply Current Game Look");
+
+    wadd(WT_LABEL, 0, 248, 736, 986, 18,
+         L"Wheel = nudge  ·  Shift+wheel = coarse  ·  Ctrl+wheel = fine  ·  Double-click slider = reset");
 }
 
 /* ---------------- 2. GAMES PANEL ---------------- */
@@ -218,8 +245,9 @@ static void build_panel_games(void)
     }
 
     /* Bottom action bar */
-    wadd(WT_GHOST, ID_B_CUSTOM_GAME_ADD, 248, 726, 220, 42, L"+ Add Custom Game");
-    wadd(WT_GHOST, ID_B_IMPORT_PRESET,   480, 726, 220, 42, L"Import Profile JSON");
+    wadd(WT_GHOST, ID_B_CUSTOM_GAME_ADD, 248, 726, 200, 42, L"+ Add Custom Game");
+    wadd(WT_GHOST, ID_B_IMPORT_PRESET,   460, 726, 200, 42, L"Import Profile JSON");
+    wadd(WT_GHOST, ID_B_RESET_GAME,      672, 726, 200, 42, L"Reset Game Preset");
 }
 
 /* ---------------- 3. DISPLAY PANEL ---------------- */
@@ -312,8 +340,11 @@ static void build_panel_color(void)
     Widget *s6 = wadd(WT_SLIDER, ID_SL_HIGHLIGHTS, 248, 556, 470, 68, L"Highlights (Shoulder Compress)");
     set_slider(s6, g_look.highlights, 0, 200, L"%");
 
-    Widget *s7 = wadd(WT_SLIDER, ID_SL_CLARITY, 248, 630, 470, 68, L"Clarity / Dehaze S-Curve");
+    Widget *s7 = wadd(WT_SLIDER, ID_SL_CLARITY, 248, 630, 230, 68, L"Clarity / Dehaze");
     set_slider(s7, g_look.clarity, 0, 200, L"%");
+
+    Widget *sh = wadd(WT_SLIDER, ID_SL_HUE, 488, 630, 230, 68, L"Hue Rotate");
+    set_slider(sh, g_look.hue, -180, 180, L"deg");
 
     /* Column 2 Sliders */
     Widget *s8 = wadd(WT_SLIDER, ID_SL_GAMMA, 740, 186, 470, 68, L"GPU Gamma Ramp");
@@ -548,57 +579,98 @@ static void build_panel_tools(void)
     wadd(WT_ACCENT,  ID_B_RESET_ALL,      732, 474, 230, 44, L"Reset All Changes");
     wadd(WT_ACCENT,  ID_B_EMERGENCY_RESET, 974, 474, 230, 44, L"Emergency Safe Reset");
 
-    wadd(WT_DIV, 0, 248, 544, 986, 20, L"GAMING MODE");
-    Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 248, 574, 300, 42,
-                          Tools_IsGamingMode() ? L"★ Gaming Mode: ACTIVE" : L"☆ Gaming Mode: OFF");
+    wadd(WT_DIV, 0, 248, 544, 986, 20, L"LIVE DIAGNOSTICS  (VALUES READ FROM THE ENGINE, NEVER FABRICATED)");
+    {
+        const GpuInfo *gpu = Eng_GetGpuInfo();
+        ModeInfo cur;
+        Modes_Current(&cur);
+        const Look *req = Eng_GetRequested();
+        const Look *app = Eng_GetApplied();
+        Widget *a = wadd(WT_CARD, 0, 248, 570, 320, 88, L"GPU");
+        wsprintfW(a->val, L"%s", gpu->name[0] ? gpu->name : gpu->vendor_name);
+        wsprintfW(a->sub, L"Mag %s  ·  Ramp %s",
+                  gpu->mag_available ? L"yes" : L"no",
+                  gpu->gamma_available ? L"yes" : L"no");
+        Widget *b = wadd(WT_CARD, 0, 580, 570, 320, 88, L"DISPLAY");
+        wsprintfW(b->val, L"%d × %d @ %d Hz", cur.w, cur.h, cur.hz);
+        wsprintfW(b->sub, L"%s", cur.native ? L"Native mode" : L"Custom mode");
+        Widget *c = wadd(WT_CARD, 0, 912, 570, 322, 88, L"REQUESTED vs APPLIED");
+        if (req && app) {
+            wsprintfW(c->val, L"Vib %d → %d   Sat %d → %d",
+                      (int)req->vibrance, (int)app->vibrance,
+                      (int)req->sat, (int)app->sat);
+            wsprintfW(c->sub, L"%s  ·  last event: %s",
+                      Eng_RequestedMatchesApplied() ? L"In sync" : L"Diverged",
+                      Eng_LastInvalidateReason());
+        } else {
+            lstrcpyW(c->val, L"Not applied yet");
+            lstrcpyW(c->sub, Eng_LastInvalidateReason());
+        }
+    }
+
+    wadd(WT_DIV, 0, 248, 668, 986, 20, L"GAMING MODE");
+    Widget *gm_btn = wadd(WT_BTN, ID_B_HOME_GAMING_MODE, 248, 694, 300, 42,
+                          Tools_IsGamingMode() ? L"Gaming Mode: ACTIVE" : L"Gaming Mode: OFF");
     gm_btn->flags = Tools_IsGamingMode() ? 1 : 0;
+    wadd(WT_LABEL, 0, 568, 704, 660, 24, L"Low-CPU UI. Color pipeline is event-driven and is never paused.");
 }
 
 /* ---------------- 10. SETTINGS PANEL ---------------- */
 static void build_panel_settings(void)
 {
-    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Application Settings");
-    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Startup, hotkeys, LAN phone remote control, and privacy.");
+    wadd(WT_HEAD, 0, 248, 70, 600, 34, L"Settings");
+    wadd(WT_LABEL, 0, 248, 104, 700, 18, L"Appearance, behaviour, and local-only configuration.");
 
-    wadd(WT_DIV, 0, 248, 134, 986, 20, L"STARTUP");
-    Widget *t1 = wadd(WT_TOGGLE, ID_T_STARTWIN, 248, 160, 400, 34, L"Start PlexusX with Windows");
-    (void)t1;
+    wadd(WT_DIV, 0, 248, 132, 986, 20, L"APPEARANCE");
+    Widget *tg = wadd(WT_TOGGLE, ID_T_GLASS, 248, 156, 400, 32, L"Glass / translucent window");
+    tg->state = g_glass;
+    Widget *tr = wadd(WT_TOGGLE, ID_T_REDUCE_MOTION, 670, 156, 400, 32, L"Reduce motion");
+    tr->state = g_reduce_motion;
 
-    Widget *t2 = wadd(WT_TOGGLE, ID_T_REDUCE_MOTION, 248, 204, 400, 34, L"Reduce Motion / Animations");
-    (void)t2;
+    wadd(WT_LABEL, 0, 248, 198, 160, 22, L"Background");
+    wadd(g_bg_mode == 0 ? WT_PRIMARY : WT_GHOST, ID_B_BG_NONE,     248, 222, 140, 34, L"None");
+    wadd(g_bg_mode == 1 ? WT_PRIMARY : WT_GHOST, ID_B_BG_ABSTRACT, 398, 222, 160, 34, L"Abstract mesh");
+    wadd(g_bg_mode == 2 ? WT_PRIMARY : WT_GHOST, ID_B_BG_IMAGE,    568, 222, 200, 34, L"Image (background.bmp)");
 
-    wadd(WT_DIV, 0, 248, 254, 986, 20, L"LAN PHONE REMOTE CONTROL");
-    Widget *tp = wadd(WT_TOGGLE, ID_T_PHONE, 248, 280, 400, 34, L"LAN Phone Remote Server");
+    wadd(WT_LABEL, 0, 248, 268, 200, 22, L"Animation intensity");
+    wadd(g_anim_level == 2 ? WT_PRIMARY : WT_GHOST, ID_B_ANIM_ON,      248, 292, 120, 34, L"On");
+    wadd(g_anim_level == 1 ? WT_PRIMARY : WT_GHOST, ID_B_ANIM_REDUCED, 378, 292, 140, 34, L"Reduced");
+    wadd(g_anim_level == 0 ? WT_PRIMARY : WT_GHOST, ID_B_ANIM_OFF,     528, 292, 120, 34, L"Off");
+
+    wadd(WT_DIV, 0, 248, 340, 986, 20, L"BEHAVIOUR");
+    Widget *t1 = wadd(WT_TOGGLE, ID_T_STARTWIN, 248, 364, 400, 32, L"Launch PlexusX with Windows");
+    t1->state = g_startup;
+    Widget *td = wadd(WT_TOGGLE, ID_T_DETECT, 670, 364, 400, 32, L"Automatic game detection");
+    td->state = Prof_Detect();
+
+    wadd(WT_DIV, 0, 248, 410, 986, 20, L"LAN PHONE REMOTE");
+    Widget *tp = wadd(WT_TOGGLE, ID_T_PHONE, 248, 434, 400, 32, L"LAN Phone Remote Server");
     tp->state = Phone_IsRunning();
-
     if (Phone_IsRunning()) {
         wchar_t u[160];
-        wsprintfW(u, L"URL: %s   ·   Pairing PIN: %04d   ·   Connected: %d",
+        wsprintfW(u, L"%s   ·   PIN %04d   ·   clients %d",
                   Phone_SummaryUrl(), Phone_GetPin(), Phone_GetClientCount());
-        wadd(WT_LABEL, 0, 248, 324, 600, 20, u);
-        wadd(WT_GHOST, ID_B_PHONE_NEW_PIN, 860, 316, 180, 34, L"New PIN");
+        wadd(WT_LABEL, 0, 248, 474, 700, 20, u);
+        wadd(WT_GHOST, ID_B_PHONE_NEW_PIN, 980, 466, 160, 32, L"New PIN");
     } else {
-        wadd(WT_LABEL, 0, 248, 324, 700, 20, L"Server is OFF. Enable to control display colors from your smartphone on Wi-Fi.");
+        wadd(WT_LABEL, 0, 248, 474, 800, 20, L"Binds to your LAN only. Pairing PIN required. No cloud.");
     }
 
-    wadd(WT_DIV, 0, 248, 366, 986, 20, L"GLOBAL HOTKEYS");
-    wadd(WT_LABEL, 0, 248, 392, 986, 20,
-         L"Ctrl+Alt+↑: Saturation +10%   ·   Ctrl+Alt+↓: Saturation −10%   ·   Ctrl+Alt+0: Reset All Channels & Tone Curves");
-    wadd(WT_LABEL, 0, 248, 416, 986, 20,
-         L"Ctrl+Alt+X: Toggle Crosshair   ·   Ctrl+Alt+E: Toggle Color Engine On/Off   ·   Ctrl+Alt+G: Gaming Mode");
-    wadd(WT_LABEL, 0, 248, 440, 986, 20,
-         L"Ctrl+Alt+Shift+R: EMERGENCY SAFE RESET  (closes test patterns, bypasses the color engine, restores the display)");
+    wadd(WT_DIV, 0, 248, 508, 986, 20, L"HOTKEYS");
+    wadd(WT_LABEL, 0, 248, 532, 986, 18,
+         L"Ctrl+Alt+↑/↓ saturation  ·  Ctrl+Alt+0 reset  ·  Ctrl+Alt+X crosshair  ·  Ctrl+Alt+E engine  ·  Ctrl+Alt+G gaming");
+    wadd(WT_LABEL, 0, 248, 552, 986, 18,
+         L"Ctrl+Alt+Shift+R emergency safe reset  ·  wheel / arrows on sliders  ·  double-click slider to reset");
 
-    wadd(WT_DIV, 0, 248, 476, 986, 20, L"PRIVACY & LOCAL CONFIGURATION");
-    wadd(WT_LABEL, 0, 248, 502, 986, 36,
-         L"100% Zero Telemetry Guarantee. No analytics, no accounts, no cloud calls. Configuration is saved locally.");
+    wadd(WT_DIV, 0, 248, 580, 986, 20, L"PRIVACY");
+    wadd(WT_LABEL, 0, 248, 604, 986, 32,
+         L"Zero telemetry. No accounts. Config lives in AppData (or portable.dat next to the exe).");
+    wadd(WT_GHOST, ID_B_OPEN_SETTINGS_DIR, 248, 644, 220, 36, L"Open App Data Folder");
+    wadd(WT_GHOST, ID_B_RESET_ALL, 480, 644, 200, 36, L"Reset all settings");
 
-    wadd(WT_GHOST, ID_B_OPEN_SETTINGS_DIR, 248, 550, 220, 38, L"Open App Data Folder");
-
-    wadd(WT_DIV, 0, 248, 606, 986, 20, L"ABOUT PLEXUSX");
-    wadd(WT_LABEL, 0, 248, 632, 986, 36,
-         L"PlexusX v" PX_VERSION L" · Built " PX_BUILD_DATE L" · Free & Open Source for Windows 10/11 x64\n"
-         L"Legitimate Windows Magnification & Display APIs. Zero anti-cheat triggers.");
+    wadd(WT_DIV, 0, 248, 692, 986, 20, L"ABOUT");
+    wadd(WT_LABEL, 0, 248, 716, 986, 28,
+         L"PlexusX v" PX_VERSION L"  ·  " PX_BUILD_DATE L"  ·  Magnification API + GDI gamma ramps  ·  Apache-2.0");
 }
 
 /* ---------------- Master UI Builder ---------------- */
@@ -642,83 +714,79 @@ static void draw_text(HDC dc, RECT rc, const wchar_t *s, HFONT f, COLORREF c, in
     SelectObject(dc, of);
 }
 
-/* Procedural Live Preview with Split Slider */
+static COLORREF px_to_color(float r, float g, float b)
+{
+    int ir = clampi((int)(cm_clampf(r, 0.0f, 1.0f) * 255.0f + 0.5f), 0, 255);
+    int ig = clampi((int)(cm_clampf(g, 0.0f, 1.0f) * 255.0f + 0.5f), 0, 255);
+    int ib = clampi((int)(cm_clampf(b, 0.0f, 1.0f) * 255.0f + 0.5f), 0, 255);
+    return RGB(ir, ig, ib);
+}
+
+/* Live preview: colour-checker + scene swatches run through cm_apply_pixel
+ * (the same Rec.709 matrix + ramp the DWM/GPU path uses). */
 static void draw_split_preview(HDC dc, RECT rc)
 {
+    static const float chips[][3] = {
+        { 0.00f, 0.00f, 0.00f }, { 0.20f, 0.20f, 0.20f }, { 0.50f, 0.50f, 0.50f }, { 0.80f, 0.80f, 0.80f },
+        { 1.00f, 1.00f, 1.00f }, { 1.00f, 0.00f, 0.00f }, { 0.00f, 1.00f, 0.00f }, { 0.00f, 0.00f, 1.00f },
+        { 0.00f, 1.00f, 1.00f }, { 1.00f, 0.00f, 1.00f }, { 1.00f, 1.00f, 0.00f }, { 0.76f, 0.57f, 0.46f },
+        { 0.40f, 0.70f, 0.30f }, { 0.20f, 0.35f, 0.70f }, { 0.95f, 0.55f, 0.20f }, { 0.55f, 0.20f, 0.15f }
+    };
+    const int nchips = (int)(sizeof chips / sizeof chips[0]);
     int w = rc.right - rc.left;
     int h = rc.bottom - rc.top;
-    (void)h;
     int split_x = rc.left + (int)(w * g_split_pos);
 
-    /* Left Side: Neutral Scene */
-    HRGN rgn_left = CreateRectRgn(rc.left, rc.top, split_x, rc.bottom);
-    SelectClipRgn(dc, rgn_left);
+    HBRUSH bg = CreateSolidBrush(RGB(18, 18, 24));
+    FillRect(dc, &rc, bg);
+    DeleteObject(bg);
 
-    HBRUSH sky_neutral = CreateSolidBrush(RGB(50, 70, 110));
-    FillRect(dc, &rc, sky_neutral);
-    DeleteObject(sky_neutral);
+    int cols = 8, rows = 2;
+    int pad = S(12), gap = S(6);
+    int cw = (w - pad * 2 - gap * (cols - 1)) / cols;
+    int ch = (h - pad * 2 - S(36) - gap * (rows - 1)) / rows;
+    if (cw < 8) cw = 8;
+    if (ch < 8) ch = 8;
 
-    HBRUSH sun_neutral = CreateSolidBrush(RGB(220, 200, 150));
-    HGDIOBJ osun = SelectObject(dc, sun_neutral);
-    Ellipse(dc, rc.left + w / 4 - S(25), rc.top + S(30), rc.left + w / 4 + S(25), rc.top + S(80));
-    SelectObject(dc, osun);
-    DeleteObject(sun_neutral);
+    Look identity = LOOK_NEUTRAL_INIT;
+    Look tuned = g_look;
 
-    POINT pts_m1[3] = { { rc.left, rc.bottom - S(50) }, { rc.left + w / 3, rc.top + S(60) }, { rc.left + (2 * w) / 3, rc.bottom - S(50) } };
-    HBRUSH m_neutral = CreateSolidBrush(RGB(40, 50, 65));
-    HGDIOBJ om = SelectObject(dc, m_neutral);
-    Polygon(dc, pts_m1, 3);
-    SelectObject(dc, om);
-    DeleteObject(m_neutral);
+    for (int i = 0; i < nchips; i++) {
+        int col = i % cols, row = i / cols;
+        RECT cr = {
+            rc.left + pad + col * (cw + gap),
+            rc.top + pad + S(28) + row * (ch + gap),
+            0, 0
+        };
+        cr.right = cr.left + cw;
+        cr.bottom = cr.top + ch;
 
-    HBRUSH tree_neutral = CreateSolidBrush(RGB(35, 60, 45));
-    RECT tr_rc = { rc.left, rc.bottom - S(70), rc.right, rc.bottom };
-    FillRect(dc, &tr_rc, tree_neutral);
-    DeleteObject(tree_neutral);
+        float lr, lg, lb, rr, rg, rb;
+        cm_apply_pixel(&identity, chips[i][0], chips[i][1], chips[i][2], &lr, &lg, &lb);
+        cm_apply_pixel(&tuned,     chips[i][0], chips[i][1], chips[i][2], &rr, &rg, &rb);
 
-    RECT lbl_left = { rc.left + S(16), rc.top + S(16), rc.left + S(200), rc.top + S(40) };
-    draw_text(dc, lbl_left, L"BEFORE (NEUTRAL)", g_fSmall, RGB(200, 200, 210), DT_LEFT);
+        HRGN left = CreateRectRgn(rc.left, rc.top, split_x, rc.bottom);
+        SelectClipRgn(dc, left);
+        HBRUSH bl = CreateSolidBrush(px_to_color(lr, lg, lb));
+        FillRect(dc, &cr, bl);
+        DeleteObject(bl);
+        SelectClipRgn(dc, NULL);
+        DeleteObject(left);
 
-    /* Right Side: Tuned with Active Look Parameters */
-    HRGN rgn_right = CreateRectRgn(split_x, rc.top, rc.right, rc.bottom);
-    SelectClipRgn(dc, rgn_right);
+        HRGN right = CreateRectRgn(split_x, rc.top, rc.right, rc.bottom);
+        SelectClipRgn(dc, right);
+        HBRUSH br = CreateSolidBrush(px_to_color(rr, rg, rb));
+        FillRect(dc, &cr, br);
+        DeleteObject(br);
+        SelectClipRgn(dc, NULL);
+        DeleteObject(right);
+    }
 
-    float sat_mult = g_look.sat / 100.0f;
-    float bri_mult = g_look.bri / 100.0f;
+    RECT lbl_left = { rc.left + S(16), rc.top + S(8), rc.left + S(280), rc.top + S(28) };
+    RECT lbl_right = { rc.right - S(280), rc.top + S(8), rc.right - S(16), rc.top + S(28) };
+    draw_text(dc, lbl_left, L"BEFORE  ·  identity look", g_fSmall, RGB(200, 200, 210), DT_LEFT);
+    draw_text(dc, lbl_right, L"AFTER  ·  cm_apply_pixel", g_fSmall, C_ACC, DT_RIGHT);
 
-    int sky_r = (int)clampi((int)(40 * bri_mult), 0, 255);
-    int sky_g = (int)clampi((int)(80 * bri_mult * sat_mult), 0, 255);
-    int sky_b = (int)clampi((int)(160 * bri_mult * sat_mult), 0, 255);
-    HBRUSH sky_tuned = CreateSolidBrush(RGB(sky_r, sky_g, sky_b));
-    FillRect(dc, &rc, sky_tuned);
-    DeleteObject(sky_tuned);
-
-    HBRUSH sun_tuned = CreateSolidBrush(RGB(255, 230, 120));
-    osun = SelectObject(dc, sun_tuned);
-    Ellipse(dc, rc.left + w / 4 - S(25), rc.top + S(30), rc.left + w / 4 + S(25), rc.top + S(80));
-    SelectObject(dc, osun);
-    DeleteObject(sun_tuned);
-
-    POINT pts_m2[3] = { { rc.left, rc.bottom - S(50) }, { rc.left + w / 3, rc.top + S(60) }, { rc.left + (2 * w) / 3, rc.bottom - S(50) } };
-    HBRUSH m_tuned = CreateSolidBrush(RGB((int)(30 * bri_mult), (int)(55 * bri_mult), (int)(90 * bri_mult)));
-    om = SelectObject(dc, m_tuned);
-    Polygon(dc, pts_m2, 3);
-    SelectObject(dc, om);
-    DeleteObject(m_tuned);
-
-    int tree_g = (int)clampi((int)(90 * bri_mult * sat_mult), 0, 255);
-    HBRUSH tree_tuned = CreateSolidBrush(RGB(20, tree_g, 40));
-    FillRect(dc, &tr_rc, tree_tuned);
-    DeleteObject(tree_tuned);
-
-    RECT lbl_right = { rc.right - S(180), rc.top + S(16), rc.right - S(16), rc.top + S(40) };
-    draw_text(dc, lbl_right, L"AFTER (PLEXUSX)", g_fSmall, C_ACC, DT_RIGHT);
-
-    SelectClipRgn(dc, NULL);
-    DeleteObject(rgn_left);
-    DeleteObject(rgn_right);
-
-    /* Draggable Split Divider Line */
     HPEN pen_div = CreatePen(PS_SOLID, S(2), C_ACC);
     HGDIOBJ op = SelectObject(dc, pen_div);
     MoveToEx(dc, split_x, rc.top, NULL);
@@ -729,14 +797,14 @@ static void draw_split_preview(HDC dc, RECT rc)
     int hy = (rc.top + rc.bottom) / 2;
     HBRUSH br_handle = CreateSolidBrush(C_ACC);
     HGDIOBJ oh = SelectObject(dc, br_handle);
-    Ellipse(dc, split_x - S(12), hy - S(12), split_x + S(12), hy + S(12));
+    Ellipse(dc, split_x - S(11), hy - S(11), split_x + S(11), hy + S(11));
     SelectObject(dc, oh);
     DeleteObject(br_handle);
 
     HPEN pen_b = CreatePen(PS_SOLID, 1, C_LINE);
     op = SelectObject(dc, pen_b);
     SelectObject(dc, GetStockObject(NULL_BRUSH));
-    Rectangle(dc, rc.left, rc.top, rc.right, rc.bottom);
+    RoundRect(dc, rc.left, rc.top, rc.right, rc.bottom, S(10), S(10));
     SelectObject(dc, op);
     DeleteObject(pen_b);
 }
@@ -913,6 +981,7 @@ static void draw_widget(HDC dc, Widget *k)
         case ID_SL_BLACK_LEVEL: cur = g_look.black_level; break;
         case ID_SL_WHITE_POINT: cur = g_look.white_point; break;
         case ID_SL_CLARITY: cur = g_look.clarity; break;
+        case ID_SL_HUE: cur = g_look.hue; break;
         case ID_SL_XH_SIZE: cur = (float)g_xh.size; break;
         case ID_SL_XH_GAP: cur = (float)g_xh.gap; break;
         case ID_SL_XH_THICK: cur = (float)g_xh.thick; break;
@@ -989,6 +1058,44 @@ void Ui_Paint(HDC hdc, const RECT *rc)
 
     /* An early paint must never touch fonts / display modes that do not exist yet */
     if (!g_ui_ready) return;
+
+    if (g_bg_mode == 2 && g_bg_bmp) {
+        HDC mdc = CreateCompatibleDC(hdc);
+        HGDIOBJ ob = SelectObject(mdc, g_bg_bmp);
+        BITMAP bm;
+        GetObject(g_bg_bmp, sizeof bm, &bm);
+        RECT content = { S(PX_SIDE_W), S(PX_TOP_H), rc->right, rc->bottom };
+        StretchBlt(hdc, content.left, content.top,
+                   content.right - content.left, content.bottom - content.top,
+                   mdc, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+        SelectObject(mdc, ob);
+        DeleteDC(mdc);
+        /* darken so controls stay readable */
+        HBRUSH dim = CreateSolidBrush(RGB(12, 12, 16));
+        /* overlay via repeated pattern is too heavy; a translucent feel is the glass window */
+        DeleteObject(dim);
+    } else if (g_bg_mode == 1) {
+        HPEN mesh = CreatePen(PS_SOLID, 1, RGB(28, 30, 42));
+        HGDIOBJ op = SelectObject(hdc, mesh);
+        int step = S(28);
+        for (int x = S(PX_SIDE_W); x < rc->right; x += step) {
+            MoveToEx(hdc, x, S(PX_TOP_H), NULL);
+            LineTo(hdc, x, rc->bottom);
+        }
+        for (int y = S(PX_TOP_H); y < rc->bottom; y += step) {
+            MoveToEx(hdc, S(PX_SIDE_W), y, NULL);
+            LineTo(hdc, rc->right, y);
+        }
+        SelectObject(hdc, op);
+        DeleteObject(mesh);
+        /* faint accent diagonal */
+        HPEN acc = CreatePen(PS_SOLID, 1, RGB(40, 48, 28));
+        op = SelectObject(hdc, acc);
+        MoveToEx(hdc, S(PX_SIDE_W), rc->bottom, NULL);
+        LineTo(hdc, rc->right, S(PX_TOP_H));
+        SelectObject(hdc, op);
+        DeleteObject(acc);
+    }
 
     /* Sidebar Background */
     RECT sr = { 0, 0, S(PX_SIDE_W), S(PX_WIN_H) };
@@ -1067,6 +1174,64 @@ void Ui_Paint(HDC hdc, const RECT *rc)
     }
 }
 
+static int set_slider_id(int id, float val)
+{
+    switch (id) {
+    case ID_SL_SAT:         g_look.sat = clampf(val, 0, 300); break;
+    case ID_SL_VIB:         g_look.vibrance = clampf(val, 0, 300); break;
+    case ID_SL_BRI:         g_look.bri = clampf(val, 0, 200); break;
+    case ID_SL_CON:         g_look.con = clampf(val, 0, 200); break;
+    case ID_SL_GAMMA:       g_look.gamma = clampf(val, 0.40f, 2.50f); break;
+    case ID_SL_TEMP:        g_look.temp = clampf(val, 3000, 10000); break;
+    case ID_SL_TINT:        g_look.tint = clampf(val, -100, 100); break;
+    case ID_SL_R_GAIN:      g_look.r_gain = clampf(val, 0, 200); break;
+    case ID_SL_G_GAIN:      g_look.g_gain = clampf(val, 0, 200); break;
+    case ID_SL_B_GAIN:      g_look.b_gain = clampf(val, 0, 200); break;
+    case ID_SL_SHADOWS:     g_look.shadows = clampf(val, 0, 200); break;
+    case ID_SL_HIGHLIGHTS:  g_look.highlights = clampf(val, 0, 200); break;
+    case ID_SL_BLACK_LEVEL: g_look.black_level = clampf(val, 0, 200); break;
+    case ID_SL_WHITE_POINT: g_look.white_point = clampf(val, 0, 200); break;
+    case ID_SL_CLARITY:     g_look.clarity = clampf(val, 0, 200); break;
+    case ID_SL_HUE:         g_look.hue = clampf(val, -180, 180); break;
+    case ID_SL_XH_SIZE:     g_xh.size = clampi((int)(val + 0.5f), 4, 64); break;
+    case ID_SL_XH_GAP:      g_xh.gap = clampi((int)(val + 0.5f), 0, 32); break;
+    case ID_SL_XH_THICK:    g_xh.thick = clampi((int)(val + 0.5f), 1, 12); break;
+    case ID_SL_XH_OPACITY:  g_xh.opacity = clampi((int)(val + 0.5f), 10, 100); break;
+    default: return 0;
+    }
+    return 1;
+}
+
+static float slider_default(int id)
+{
+    switch (id) {
+    case ID_SL_GAMMA: return 1.00f;
+    case ID_SL_TEMP:  return 6500.0f;
+    case ID_SL_TINT:
+    case ID_SL_HUE:   return 0.0f;
+    case ID_SL_XH_SIZE: return 16.0f;
+    case ID_SL_XH_GAP:  return 4.0f;
+    case ID_SL_XH_THICK: return 2.0f;
+    case ID_SL_XH_OPACITY: return 100.0f;
+    default: return 100.0f;
+    }
+}
+
+static void load_bg_image(void)
+{
+    if (g_bg_bmp) { DeleteObject(g_bg_bmp); g_bg_bmp = NULL; }
+    if (!g_appdata[0]) return;
+    wchar_t p[MAX_PATH];
+    wsprintfW(p, L"%s\\background.bmp", g_appdata);
+    g_bg_bmp = (HBITMAP)LoadImageW(NULL, p, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+}
+
+static void commit_look(void)
+{
+    Ui_RebuildPanel();
+    Main_ApplyAll();
+}
+
 /* ---------------- Event Handling & Interactivity ---------------- */
 
 int Ui_MouseDown(int x, int y)
@@ -1100,30 +1265,8 @@ int Ui_MouseDown(int x, int y)
                 int tx1 = k->rc.left + ins, tx2 = k->rc.right - ins;
                 float f = clampf((float)(x - tx1) / (float)(tx2 - tx1), 0.0f, 1.0f);
                 float val = k->vmin + f * (k->vmax - k->vmin);
-
-                switch (k->id) {
-                case ID_SL_SAT: g_look.sat = val; break;
-                case ID_SL_VIB: g_look.vibrance = val; break;
-                case ID_SL_BRI: g_look.bri = val; break;
-                case ID_SL_CON: g_look.con = val; break;
-                case ID_SL_GAMMA: g_look.gamma = val; break;
-                case ID_SL_TEMP: g_look.temp = val; break;
-                case ID_SL_TINT: g_look.tint = val; break;
-                case ID_SL_R_GAIN: g_look.r_gain = val; break;
-                case ID_SL_G_GAIN: g_look.g_gain = val; break;
-                case ID_SL_B_GAIN: g_look.b_gain = val; break;
-                case ID_SL_SHADOWS: g_look.shadows = val; break;
-                case ID_SL_HIGHLIGHTS: g_look.highlights = val; break;
-                case ID_SL_BLACK_LEVEL: g_look.black_level = val; break;
-                case ID_SL_WHITE_POINT: g_look.white_point = val; break;
-                case ID_SL_CLARITY: g_look.clarity = val; break;
-                case ID_SL_XH_SIZE: g_xh.size = (int)val; break;
-                case ID_SL_XH_GAP: g_xh.gap = (int)val; break;
-                case ID_SL_XH_THICK: g_xh.thick = (int)val; break;
-                case ID_SL_XH_OPACITY: g_xh.opacity = (int)val; break;
-                }
-                Ui_RebuildPanel();
-                Main_ApplyAll();
+                set_slider_id(k->id, val);
+                commit_look();
                 return 1;
             }
             if (k->type == WT_TOGGLE) {
@@ -1151,6 +1294,19 @@ int Ui_MouseDown(int x, int y)
                 case ID_T_PHONE:
                     if (Phone_IsRunning()) Phone_Stop();
                     else Phone_Start();
+                    break;
+                case ID_T_REDUCE_MOTION:
+                    g_reduce_motion = !g_reduce_motion;
+                    if (g_reduce_motion) g_anim_level = 0;
+                    Main_ApplyChrome();
+                    break;
+                case ID_T_GLASS:
+                    g_glass = !g_glass;
+                    Main_ApplyChrome();
+                    break;
+                case ID_T_STARTWIN:
+                    g_startup = !g_startup;
+                    Main_SetStartup(g_startup);
                     break;
                 }
                 Ui_RebuildPanel();
@@ -1259,30 +1415,8 @@ int Ui_MouseMove(int x, int y, int dragging)
                 int tx1 = k->rc.left + ins, tx2 = k->rc.right - ins;
                 float f = clampf((float)(x - tx1) / (float)(tx2 - tx1), 0.0f, 1.0f);
                 float val = k->vmin + f * (k->vmax - k->vmin);
-
-                switch (k->id) {
-                case ID_SL_SAT: g_look.sat = val; break;
-                case ID_SL_VIB: g_look.vibrance = val; break;
-                case ID_SL_BRI: g_look.bri = val; break;
-                case ID_SL_CON: g_look.con = val; break;
-                case ID_SL_GAMMA: g_look.gamma = val; break;
-                case ID_SL_TEMP: g_look.temp = val; break;
-                case ID_SL_TINT: g_look.tint = val; break;
-                case ID_SL_R_GAIN: g_look.r_gain = val; break;
-                case ID_SL_G_GAIN: g_look.g_gain = val; break;
-                case ID_SL_B_GAIN: g_look.b_gain = val; break;
-                case ID_SL_SHADOWS: g_look.shadows = val; break;
-                case ID_SL_HIGHLIGHTS: g_look.highlights = val; break;
-                case ID_SL_BLACK_LEVEL: g_look.black_level = val; break;
-                case ID_SL_WHITE_POINT: g_look.white_point = val; break;
-                case ID_SL_CLARITY: g_look.clarity = val; break;
-                case ID_SL_XH_SIZE: g_xh.size = (int)val; break;
-                case ID_SL_XH_GAP: g_xh.gap = (int)val; break;
-                case ID_SL_XH_THICK: g_xh.thick = (int)val; break;
-                case ID_SL_XH_OPACITY: g_xh.opacity = (int)val; break;
-                }
-                Ui_RebuildPanel();
-                Main_ApplyAll();
+                set_slider_id(k->id, val);
+                commit_look();
                 return -1;
             }
         }
@@ -1314,7 +1448,89 @@ int Ui_Hover(int x, int y)
 
 int Ui_Wheel(int x, int y, int delta)
 {
-    (void)x; (void)y; (void)delta;
+    if (!g_ui_ready || delta == 0) return 0;
+    int ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    int shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    for (int i = 0; i < g_nw; i++) {
+        Widget *k = &g_w[i];
+        if (k->type != WT_SLIDER) continue;
+        if (x < k->rc.left || x > k->rc.right || y < k->rc.top || y > k->rc.bottom) continue;
+        float span = k->vmax - k->vmin;
+        float step = span / 100.0f;
+        if (shift) step *= 5.0f;
+        if (ctrl) step *= 0.2f;
+        float dir = delta > 0 ? 1.0f : -1.0f;
+        float cur = k->vmin + ((k->val[0] ? 0.0f : 0.0f));
+        /* read current from the look via a 0-span lerp using the painted value */
+        float f = 0.0f;
+        if (k->vmax != k->vmin) {
+            /* reconstruct from widget id */
+            switch (k->id) {
+            case ID_SL_SAT: cur = g_look.sat; break;
+            case ID_SL_VIB: cur = g_look.vibrance; break;
+            case ID_SL_BRI: cur = g_look.bri; break;
+            case ID_SL_CON: cur = g_look.con; break;
+            case ID_SL_GAMMA: cur = g_look.gamma; break;
+            case ID_SL_TEMP: cur = g_look.temp; break;
+            case ID_SL_TINT: cur = g_look.tint; break;
+            case ID_SL_R_GAIN: cur = g_look.r_gain; break;
+            case ID_SL_G_GAIN: cur = g_look.g_gain; break;
+            case ID_SL_B_GAIN: cur = g_look.b_gain; break;
+            case ID_SL_SHADOWS: cur = g_look.shadows; break;
+            case ID_SL_HIGHLIGHTS: cur = g_look.highlights; break;
+            case ID_SL_BLACK_LEVEL: cur = g_look.black_level; break;
+            case ID_SL_WHITE_POINT: cur = g_look.white_point; break;
+            case ID_SL_CLARITY: cur = g_look.clarity; break;
+            case ID_SL_HUE: cur = g_look.hue; break;
+            case ID_SL_XH_SIZE: cur = (float)g_xh.size; break;
+            case ID_SL_XH_GAP: cur = (float)g_xh.gap; break;
+            case ID_SL_XH_THICK: cur = (float)g_xh.thick; break;
+            case ID_SL_XH_OPACITY: cur = (float)g_xh.opacity; break;
+            default: cur = k->vmin; break;
+            }
+        }
+        (void)f;
+        set_slider_id(k->id, cur + dir * step);
+        g_active_widget = k->id;
+        commit_look();
+        return 1;
+    }
+    return 0;
+}
+
+int Ui_Key(int vk, int ctrl, int shift)
+{
+    (void)ctrl; (void)shift;
+    if (!g_ui_ready) return 0;
+    int id = g_active_widget ? g_active_widget : g_hover_widget;
+    Widget *k = NULL;
+    for (int i = 0; i < g_nw; i++) {
+        if (g_w[i].id == id && g_w[i].type == WT_SLIDER) { k = &g_w[i]; break; }
+    }
+    if (!k) return 0;
+    float dir = 0.0f;
+    if (vk == VK_RIGHT || vk == VK_UP) dir = 1.0f;
+    else if (vk == VK_LEFT || vk == VK_DOWN) dir = -1.0f;
+    else if (vk == VK_HOME) { set_slider_id(k->id, k->vmin); commit_look(); return 1; }
+    else if (vk == VK_END) { set_slider_id(k->id, k->vmax); commit_look(); return 1; }
+    else return 0;
+    /* reuse wheel's current-value path */
+    return Ui_Wheel((k->rc.left + k->rc.right) / 2, (k->rc.top + k->rc.bottom) / 2,
+                    dir > 0 ? 120 : -120);
+}
+
+int Ui_DoubleClick(int x, int y)
+{
+    if (!g_ui_ready) return 0;
+    for (int i = 0; i < g_nw; i++) {
+        Widget *k = &g_w[i];
+        if (k->type != WT_SLIDER) continue;
+        if (x < k->rc.left || x > k->rc.right || y < k->rc.top || y > k->rc.bottom) continue;
+        set_slider_id(k->id, slider_default(k->id));
+        commit_look();
+        Ui_Notify(L"Slider reset to default");
+        return 1;
+    }
     return 0;
 }
 
@@ -1384,12 +1600,50 @@ int Ui_Exec(int id)
         Main_ApplyAll();
         return 1;
     case ID_B_RESET_COLOR:
-        g_look = (Look){ 1, 100, 100, 100, 100, 1.00f, 6500, 0, 100, 100, 100, 100, 100, 100, 100, 100, 0 };
+        g_look = (Look)LOOK_NEUTRAL_INIT;
         Eng_Reset();
         Ui_Notify(L"All Color Settings Reset to Neutral");
         Ui_RebuildPanel();
         Main_ApplyAll();
         return 1;
+    case ID_B_RESET_EFFECT:
+        g_look.sat = 100; g_look.vibrance = 100; g_look.bri = 100; g_look.con = 100;
+        g_look.hue = 0;
+        Ui_Notify(L"Current effect (sat/vib/bri/con/hue) reset");
+        Ui_RebuildPanel();
+        Main_ApplyAll();
+        return 1;
+    case ID_B_RESET_GAME: {
+        Profile *gp = Prof_Get(Prof_ActiveIndex());
+        if (gp && gp->sub_count > 0) {
+            gp->active_sub = 0;
+            Ui_LoadLook(&gp->sub[0].look);
+            Ui_Notify(L"Game preset restored to first sub-mode");
+            Ui_RebuildPanel();
+            Main_ApplyAll();
+        }
+        return 1;
+    }
+    case ID_B_BG_NONE:
+        g_bg_mode = 0;
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_BG_ABSTRACT:
+        g_bg_mode = 1;
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_BG_IMAGE:
+        g_bg_mode = 2;
+        load_bg_image();
+        if (!g_bg_bmp) Ui_Notify(L"Drop background.bmp into the AppData folder");
+        Ui_RebuildPanel();
+        return 1;
+    case ID_B_ANIM_ON:
+        g_anim_level = 2; g_reduce_motion = 0; Ui_RebuildPanel(); return 1;
+    case ID_B_ANIM_REDUCED:
+        g_anim_level = 1; Ui_RebuildPanel(); return 1;
+    case ID_B_ANIM_OFF:
+        g_anim_level = 0; g_reduce_motion = 1; Ui_RebuildPanel(); return 1;
     case ID_B_SAVE_PRESET: {
         Prof_AddCustom(L"My Custom Profile", L"", L"Custom Preset", Ui_Look());
         Ui_Notify(L"Current configuration saved to custom presets");
@@ -1616,6 +1870,7 @@ void Ui_Free(void)
     DeleteObject(g_fSmall);
     DeleteObject(g_fMono);
     DeleteObject(g_fBigVal);
+    if (g_bg_bmp) { DeleteObject(g_bg_bmp); g_bg_bmp = NULL; }
     Tools_Shutdown();
 }
 
@@ -1665,4 +1920,21 @@ void Ui_FilterGames(const wchar_t *filter)
 const wchar_t *Ui_GetFilter(void)
 {
     return g_game_filter;
+}
+
+int  Ui_GlassEnabled(void) { return g_glass; }
+int  Ui_BgMode(void) { return g_bg_mode; }
+int  Ui_ReduceMotion(void) { return g_reduce_motion; }
+int  Ui_AnimLevel(void) { return g_anim_level; }
+int  Ui_StartupEnabled(void) { return g_startup; }
+void Ui_SetStartupEnabled(int on) { g_startup = on ? 1 : 0; }
+
+void Ui_LoadAppearance(int glass, int bg, int reduce, int anim, int startup)
+{
+    g_glass = glass ? 1 : 0;
+    g_bg_mode = clampi(bg, 0, 2);
+    g_reduce_motion = reduce ? 1 : 0;
+    g_anim_level = clampi(anim, 0, 2);
+    g_startup = startup ? 1 : 0;
+    if (g_bg_mode == 2) load_bg_image();
 }

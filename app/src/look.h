@@ -9,8 +9,8 @@
 
 typedef struct Look {
     int   enabled;         /* 1 = active, 0 = bypassed/neutral */
-    float sat;             /* 0..300 (%)   100 = neutral, 300 = max application boost */
-    float vibrance;        /* 0..300 (%)   100 = neutral, smart saturation */
+    float sat;             /* 0..300 (%)   100 = identity chroma, 300 = 3× Rec.709 saturation */
+    float vibrance;        /* 0..300 (%)   100 = no extra boost; bounded, never multiplies sat past the DWM weight limit */
     float bri;             /* 0..200 (%)   100 = neutral (0.0 to 2.0x) */
     float con;             /* 0..200 (%)   100 = neutral (0.0 to 2.0x) */
     float gamma;           /* 0.40..2.50   1.00 = neutral gamma curve */
