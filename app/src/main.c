@@ -2,7 +2,6 @@
  * Main Entry Point: Window Lifecycle, Tray Icon, Hotkeys, Timers & Persistence.
  */
 #include "common.h"
-#include "color_math.h"
 #include <shlobj.h>
 #include <signal.h>
 #include <dwmapi.h>
@@ -25,7 +24,6 @@ static wchar_t g_exepath[MAX_PATH];
 static wchar_t g_rampsfile[MAX_PATH];
 static wchar_t g_dirtyfile[MAX_PATH];
 static int     g_detect_tick = 0;
-static HWINEVENTHOOK g_fg_hook = NULL;
 
 static int startup_enabled(void);
 
@@ -322,94 +320,63 @@ static HICON build_app_icon(int sz)
     return ic ? ic : LoadIcon(NULL, IDI_APPLICATION);
 }
 
-/* ---------------- Config Persistence ---------------- */
+/* ---------------- Config Persistence ----------------
+ * The file format, atomicity and corruption handling belong to the SettingsStore
+ * (settings/settings_store.*).  main.c only translates live UI state into keys. */
 static void save_current_config(void)
 {
-    wchar_t f[MAX_PATH];
-    wsprintfW(f, L"%s\\config.ini", g_appdata);
-    wchar_t b[32];
-    Look *l = Ui_Look();
+    PxSetStoreLook(Ui_Look());                 /* [current] keeps the FULL-precision look */
 
-    wsprintfW(b, L"%d", (int)l->enabled);     WritePrivateProfileStringW(L"current", L"enabled", b, f);
-    wsprintfW(b, L"%d", (int)l->sat);         WritePrivateProfileStringW(L"current", L"sat", b, f);
-    wsprintfW(b, L"%d", (int)l->vibrance);    WritePrivateProfileStringW(L"current", L"vibrance", b, f);
-    wsprintfW(b, L"%d", (int)l->bri);         WritePrivateProfileStringW(L"current", L"bri", b, f);
-    wsprintfW(b, L"%d", (int)l->con);         WritePrivateProfileStringW(L"current", L"con", b, f);
-    wsprintfW(b, L"%d", (int)(l->gamma * 100)); WritePrivateProfileStringW(L"current", L"gamma", b, f);
-    wsprintfW(b, L"%d", (int)l->temp);        WritePrivateProfileStringW(L"current", L"temp", b, f);
-    wsprintfW(b, L"%d", (int)l->tint);        WritePrivateProfileStringW(L"current", L"tint", b, f);
-    wsprintfW(b, L"%d", (int)l->r_gain);      WritePrivateProfileStringW(L"current", L"r_gain", b, f);
-    wsprintfW(b, L"%d", (int)l->g_gain);      WritePrivateProfileStringW(L"current", L"g_gain", b, f);
-    wsprintfW(b, L"%d", (int)l->b_gain);      WritePrivateProfileStringW(L"current", L"b_gain", b, f);
-    wsprintfW(b, L"%d", (int)l->shadows);     WritePrivateProfileStringW(L"current", L"shadows", b, f);
-    wsprintfW(b, L"%d", (int)l->highlights);  WritePrivateProfileStringW(L"current", L"highlights", b, f);
-    wsprintfW(b, L"%d", (int)l->black_level); WritePrivateProfileStringW(L"current", L"black_level", b, f);
-    wsprintfW(b, L"%d", (int)l->white_point); WritePrivateProfileStringW(L"current", L"white_point", b, f);
-    wsprintfW(b, L"%d", (int)l->clarity);     WritePrivateProfileStringW(L"current", L"clarity", b, f);
-    wsprintfW(b, L"%d", (int)l->hue);         WritePrivateProfileStringW(L"current", L"hue", b, f);
-
-    wsprintfW(b, L"%d", Ui_GlassEnabled());   WritePrivateProfileStringW(L"ui", L"glass", b, f);
-    wsprintfW(b, L"%d", Ui_BgMode());         WritePrivateProfileStringW(L"ui", L"bg", b, f);
-    wsprintfW(b, L"%d", Ui_ReduceMotion());   WritePrivateProfileStringW(L"ui", L"reduce_motion", b, f);
-    wsprintfW(b, L"%d", Ui_AnimLevel());      WritePrivateProfileStringW(L"ui", L"anim", b, f);
+    PxIni *c = PxSet_Cfg();
+    px_ini_set_int(c, "ui", "glass",         Ui_GlassEnabled());
+    px_ini_set_int(c, "ui", "bg",           Ui_BgMode());
+    px_ini_set_int(c, "ui", "reduce_motion", Ui_ReduceMotion());
+    px_ini_set_int(c, "ui", "anim",         Ui_AnimLevel());
+    px_ini_set_int(c, "ui", "startup",      startup_enabled());
 
     XhCfg x;
     Ui_GetXh(&x);
-    wsprintfW(b, L"%d", x.on);         WritePrivateProfileStringW(L"xhair", L"on", b, f);
-    wsprintfW(b, L"%d", x.shape);      WritePrivateProfileStringW(L"xhair", L"shape", b, f);
-    wsprintfW(b, L"%d", x.size);       WritePrivateProfileStringW(L"xhair", L"size", b, f);
-    wsprintfW(b, L"%d", x.gap);        WritePrivateProfileStringW(L"xhair", L"gap", b, f);
-    wsprintfW(b, L"%d", x.thick);      WritePrivateProfileStringW(L"xhair", L"thick", b, f);
-    wsprintfW(b, L"%d", x.opacity);    WritePrivateProfileStringW(L"xhair", L"opacity", b, f);
-    wsprintfW(b, L"%d", x.outline);    WritePrivateProfileStringW(L"xhair", L"outline", b, f);
-    wsprintfW(b, L"%d", x.center_dot); WritePrivateProfileStringW(L"xhair", L"center_dot", b, f);
-    wsprintfW(b, L"%d", (int)x.color); WritePrivateProfileStringW(L"xhair", L"color", b, f);
+    px_ini_set_int(c, "xhair", "on",         x.on);
+    px_ini_set_int(c, "xhair", "shape",      x.shape);
+    px_ini_set_int(c, "xhair", "size",       x.size);
+    px_ini_set_int(c, "xhair", "gap",        x.gap);
+    px_ini_set_int(c, "xhair", "thick",      x.thick);
+    px_ini_set_int(c, "xhair", "opacity",    x.opacity);
+    px_ini_set_int(c, "xhair", "outline",    x.outline);
+    px_ini_set_int(c, "xhair", "center_dot", x.center_dot);
+    px_ini_set_int(c, "xhair", "dot_size",   x.dot_size);
+    px_ini_set_int(c, "xhair", "color",      (int)x.color);
+    px_ini_set_int(c, "xhair", "ocolor",     (int)x.ocolor);
+    PxSet_Flush();
 }
 
 static void load_current_config(void)
 {
-    wchar_t f[MAX_PATH];
-    wsprintfW(f, L"%s\\config.ini", g_appdata);
+    const PxIni *c = PxSet_CfgRO();
+
     Look l;
-    l.enabled = GetPrivateProfileIntW(L"current", L"enabled", 1, f);
-    l.sat = (float)GetPrivateProfileIntW(L"current", L"sat", 150, f);
-    l.vibrance = (float)GetPrivateProfileIntW(L"current", L"vibrance", 120, f);
-    l.bri = (float)GetPrivateProfileIntW(L"current", L"bri", 100, f);
-    l.con = (float)GetPrivateProfileIntW(L"current", L"con", 100, f);
-    l.gamma = GetPrivateProfileIntW(L"current", L"gamma", 100, f) / 100.0f;
-    l.temp = (float)GetPrivateProfileIntW(L"current", L"temp", 6500, f);
-    l.tint = (float)GetPrivateProfileIntW(L"current", L"tint", 0, f);
-    l.r_gain = (float)GetPrivateProfileIntW(L"current", L"r_gain", 100, f);
-    l.g_gain = (float)GetPrivateProfileIntW(L"current", L"g_gain", 100, f);
-    l.b_gain = (float)GetPrivateProfileIntW(L"current", L"b_gain", 100, f);
-    l.shadows = (float)GetPrivateProfileIntW(L"current", L"shadows", 100, f);
-    l.highlights = (float)GetPrivateProfileIntW(L"current", L"highlights", 100, f);
-    l.black_level = (float)GetPrivateProfileIntW(L"current", L"black_level", 100, f);
-    l.white_point = (float)GetPrivateProfileIntW(L"current", L"white_point", 100, f);
-    l.clarity = (float)GetPrivateProfileIntW(L"current", L"clarity", 100, f);
-    l.hue = (float)GetPrivateProfileIntW(L"current", L"hue", 0, f);
-    cm_sanitize_look(&l);      /* a hand-edited or corrupt config can never feed NaN / absurd values to the engine */
+    PxSetLoadLook(&l);          /* already sanitized + range-clamped by the store */
     Ui_LoadLook(&l);
 
-    Ui_LoadAppearance(
-        GetPrivateProfileIntW(L"ui", L"glass", 1, f),
-        GetPrivateProfileIntW(L"ui", L"bg", 1, f),
-        GetPrivateProfileIntW(L"ui", L"reduce_motion", 0, f),
-        GetPrivateProfileIntW(L"ui", L"anim", 2, f),
-        startup_enabled());
+    Ui_LoadAppearance(px_ini_get_int(c, "ui", "glass", 1),
+                      px_ini_get_int(c, "ui", "bg", 1),
+                      px_ini_get_int(c, "ui", "reduce_motion", 0),
+                      px_ini_get_int(c, "ui", "anim", 2),
+                      startup_enabled());
 
     XhCfg x;
     Ui_GetXh(&x);
-    x.on = GetPrivateProfileIntW(L"xhair", L"on", 0, f);
-    x.shape = GetPrivateProfileIntW(L"xhair", L"shape", XH_CROSS, f);
-    x.size = GetPrivateProfileIntW(L"xhair", L"size", 16, f);
-    x.gap = GetPrivateProfileIntW(L"xhair", L"gap", 4, f);
-    x.thick = GetPrivateProfileIntW(L"xhair", L"thick", 2, f);
-    x.opacity = GetPrivateProfileIntW(L"xhair", L"opacity", 100, f);
-    x.outline = GetPrivateProfileIntW(L"xhair", L"outline", 1, f);
-    x.center_dot = GetPrivateProfileIntW(L"xhair", L"center_dot", 1, f);
-    x.color = (COLORREF)GetPrivateProfileIntW(L"xhair", L"color", RGB(0xC6, 0xFF, 0x3D), f);
-    x.ocolor = (COLORREF)GetPrivateProfileIntW(L"xhair", L"ocolor", RGB(0, 0, 0), f);
+    x.on         = px_ini_get_int(c, "xhair", "on", 0);
+    x.shape      = px_ini_get_int(c, "xhair", "shape", XH_CROSS);
+    x.size       = px_ini_get_int(c, "xhair", "size", 16);
+    x.gap        = px_ini_get_int(c, "xhair", "gap", 4);
+    x.thick      = px_ini_get_int(c, "xhair", "thick", 2);
+    x.opacity    = px_ini_get_int(c, "xhair", "opacity", 100);
+    x.outline    = px_ini_get_int(c, "xhair", "outline", 1);
+    x.center_dot = px_ini_get_int(c, "xhair", "center_dot", 1);
+    x.dot_size   = px_ini_get_int(c, "xhair", "dot_size", 2);
+    x.color      = (COLORREF)px_ini_get_int(c, "xhair", "color", (int)RGB(0xC6, 0xFF, 0x3D));
+    x.ocolor     = (COLORREF)px_ini_get_int(c, "xhair", "ocolor", 0);
     Ui_SetXh(&x);
 }
 
@@ -417,6 +384,23 @@ void Main_Save(void)
 {
     save_current_config();
     Prof_Save();
+}
+
+/* Diagnostics composer: the app-wide truth = engine half + display/game halves.
+ * The engine never reaches into display/game modules; the snapshot is assembled
+ * here, at the top of the stack. */
+void Main_FillSnapshot(PxEngineSnapshot *s)
+{
+    if (!s) return;
+    PxSnap_Init(s);
+    Eng_FillSnapshot(s);
+    MonitorInfo *mi = Modes_GetMonitor(Modes_CurrentMonitorIndex());
+    if (mi) s->monitor = *mi;
+    const GpuInfo *gpu = Dm_GpuInfo();
+    if (gpu) s->gpu = *gpu;
+    const PxGameDisplayState *gs = Prof_GameState();
+    if (gs) s->game = *gs;
+    s->coalesced_events = Wm_CoalescedEvents();
 }
 
 void Main_ApplyAll(void)
@@ -429,6 +413,7 @@ void Main_ApplyAll(void)
     Xh_Update(&x);
 
     Phone_SetLook(l);
+    if (Ui_IsReady()) Prof_SyncApplied(L"apply");
 }
 
 void Main_SetStartup(int on)
@@ -488,19 +473,6 @@ void Main_ApplyChrome(void)
         bb.fEnable = FALSE;
         DwmEnableBlurBehindWindow(g_hwnd, &bb);
     }
-}
-
-static void pipeline_reassert(const wchar_t *why)
-{
-    Eng_Invalidate(why);
-    Main_ApplyAll();
-}
-
-static void CALLBACK fg_event(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
-                             LONG id_obj, LONG id_child, DWORD tid, DWORD time)
-{
-    (void)hook; (void)event; (void)hwnd; (void)id_obj; (void)id_child; (void)tid; (void)time;
-    if (g_hwnd) PostMessageW(g_hwnd, WM_APP_FOREGROUND, 0, 0);
 }
 
 /* Ctrl+Alt+Shift+R / tray / Tools panel: the "get my screen back" button.
@@ -623,35 +595,35 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_SIZE:
         if (Ui_IsReady()) InvalidateRect(wnd, NULL, FALSE);
         return 0;
+    /* All focus / display / device / session reactions live in the WindowManager
+     * (windows/window_manager.c): the engine cache is invalidated, the REQUESTED
+     * look is re-asserted, and the one coalesced follow-up is scheduled.  Never a
+     * fixed sleep; never a rewrite of user settings from a GPU readout. */
     case WM_DISPLAYCHANGE:
         Modes_Refresh();
-        pipeline_reassert(L"display-change");
+        Wm_OnSystemEvent(PXWIN_EV_DISPLAYCHANGE);
         if (Ui_IsReady()) { Ui_RebuildPanel(); InvalidateRect(wnd, NULL, FALSE); }
         return 0;
     case WM_ACTIVATEAPP:
-        /* ALT+TAB / focus regain: DWM often drops MagSetFullscreenColorEffect.
-         * Reassert REQUESTED state; never rewrite the user's sliders from GPU readout. */
-        if (wp) pipeline_reassert(L"activate-app");
+        /* ALT+TAB back: DWM often drops MagSetFullscreenColorEffect while the
+         * game was focused.  Re-assert exactly what the ColorState requests. */
+        Wm_OnActivate(wp ? 1 : 0);
+        if (!wp && Ui_IsReady()) { Phone_PushProfileChange(L"app-hidden"); Eng_BackupCurrentState(); }
         return 0;
     case WM_WTSSESSION_CHANGE:
         if (wp == WTS_SESSION_UNLOCK || wp == WTS_CONSOLE_CONNECT || wp == WTS_SESSION_LOGON)
-            pipeline_reassert(L"session");
+            Wm_OnSystemEvent(PXWIN_EV_SESSION);
         return 0;
     case WM_POWERBROADCAST:
         if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND)
-            pipeline_reassert(L"resume");
+            Wm_OnSystemEvent(PXWIN_EV_RESUME);
         return TRUE;
     case WM_DEVICECHANGE:
         Modes_Refresh();
-        pipeline_reassert(L"device-change");
+        Wm_OnSystemEvent(PXWIN_EV_DEVICECHANGE);
         return TRUE;
     case WM_APP_FOREGROUND:
-        Prof_Poll();
-        pipeline_reassert(L"foreground");
-        if (Ui_IsReady() && g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
-        return 0;
-    case WM_APP_PIPELINE:
-        pipeline_reassert(L"pipeline");
+        Wm_OnForegroundEvent();
         return 0;
     case WM_NCHITTEST: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -728,13 +700,16 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         handle_hotkey(wp);
         return 0;
     case WM_TIMER:
-        if (wp == TIMER_POLL) {
-            Prof_TickPending();
-            /* Slow fallback only for missed WinEvent game launches — never a color reapply loop. */
+        if (wp == PX_SETTLE_MS) {
+            Wm_OnSettleTimer();          /* coalesced ALT+TAB follow-up re-assert */
+            InvalidateRect(wnd, NULL, FALSE);
+        } else if (wp == TIMER_POLL) {
+            Wm_Tick();                   /* delayed game-profile applies */
+            /* Slow fallback only for missed WinEvents — never a color reapply loop. */
             if (++g_detect_tick >= 16) {
                 g_detect_tick = 0;
                 if (Prof_Poll()) {
-                    pipeline_reassert(L"detect-fallback");
+                    Wm_ReassertNow(L"detect-fallback");
                     InvalidateRect(wnd, NULL, FALSE);
                 }
             }
@@ -800,7 +775,8 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         tray_del();
         KillTimer(wnd, TIMER_POLL);
-        if (g_fg_hook) { UnhookWinEvent(g_fg_hook); g_fg_hook = NULL; }
+        KillTimer(wnd, PX_SETTLE_MS);
+        Wm_Shutdown();                   /* unhook WinEvent + drop marker file */
         WTSUnRegisterSessionNotification(wnd);
         Main_Save();
         Phone_Stop();
@@ -861,7 +837,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     wsprintfW(g_rampsfile, L"%s\\ramps.dat", g_appdata);
     wsprintfW(g_dirtyfile, L"%s\\dirty.flg", g_appdata);
 
-    /* Gamma crash recovery */
+    /* The single settings store: loads + migrates + validates config.ini / profiles.ini. */
+    PxSet_Init(g_appdata);
+
+    /* Gamma crash recovery: paths BEFORE Eng_Init so the pipeline loads ramps.dat */
     int dirty = (GetFileAttributesW(g_dirtyfile) != INVALID_FILE_ATTRIBUTES);
     Eng_SetPaths(g_rampsfile, g_dirtyfile, dirty);
     Eng_Init();
@@ -914,8 +893,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
     tray_add(g_hwnd);
     Main_ApplyChrome();
     WTSRegisterSessionNotification(g_hwnd, NOTIFY_FOR_THIS_SESSION);
-    g_fg_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
-                                NULL, fg_event, 0, 0, WINEVENT_OUTOFCONTEXT);
+
+    /* WindowManager: one WinEvent hook + the display/session watchers; it posts
+     * WM_APP_FOREGROUND to THIS thread and owns the reassert + settle policy. */
+    Wm_Init(g_hwnd);
+
     SetTimer(g_hwnd, TIMER_POLL, TIMER_POLL_MS, NULL);
 
     /* Register Global Hotkeys */
@@ -929,6 +911,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show)
         Ui_Notify(L"Ctrl+Alt+Shift+R is used by another app - use the tray menu for Emergency Safe Reset");
 
     Main_ApplyAll();
+    Prof_SyncApplied(L"startup");
+
+    /* Establish the initial foreground context once, through the same event path
+     * an ALT+TAB uses — no sleep, no second code path at start-up. */
+    PostMessageW(g_hwnd, WM_APP_FOREGROUND, 0, 0);
 
     MSG m;
     while (GetMessageW(&m, NULL, 0, 0)) {

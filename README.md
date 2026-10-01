@@ -3,7 +3,7 @@
 [![Build Windows Executable](https://github.com/diamantmuqici-dotcom/PlexusX/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/diamantmuqici-dotcom/PlexusX/actions/workflows/build-windows-exe.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20x64-0078d4.svg)]()
-[![Version](https://img.shields.io/badge/Version-v2.1.0-c6ff3d.svg)]()
+[![Version](https://img.shields.io/badge/Version-v2.2.0-c6ff3d.svg)]()
 
 > **Your Display. Your Colors. Your Games.**  
 > A free, high-performance Windows gaming display and visual control center.  
@@ -17,7 +17,7 @@
 
 Most gaming monitor tools fall into one of two traps: they are either rudimentary 1-slider utilities, or commercial software bloated with artificial paywalls, accounts, subscription prompts, and background telemetry.
 
-**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (~367 KB) with near-zero idle CPU footprint:
+**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (~448 KB) with near-zero idle CPU footprint:
 
 * **300% Saturation Engine** — Neutral 100% up to 300% Rec.709 chroma boost. Vibrance is a *bounded* extra boost (it no longer multiplies with saturation past the DWM weight limit). Neutrals stay neutral; the old independent-clamp path that painted high vibrance green is gone.
 * **Decoupled Display Pipeline** — Linear controls (saturation, vibrance, hue, temperature, tint, RGB gain, brightness, contrast, black level, white point) run through a 5×5 DWM color matrix, so dragging them never re-programs the GPU. Only the non-linear tone curves (gamma power curve, shadow toe lift, highlight shoulder compression, clarity/dehaze S-curve) are written as monotonic 16-bit lookup tables via `SetDeviceGammaRamp` — and only when a curve actually changes.
@@ -73,8 +73,8 @@ It operates in the exact same legal space as the NVIDIA Control Panel, AMD Softw
 
 | Deliverable | Description | Size | SHA-256 Checksum |
 | :--- | :--- | :---: | :--- |
-| **`PlexusX.exe`** | Standalone Portable Executable | 367 KB | `dec29688a2b8ed0a5449c7d499050e2fb8a0da3b5e3e7d7777309c780cba4820` |
-| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 617 KB | `6a2277a900c55c10b93be372625cff45d631650dc2f826a02de3eee7b39a964b` |
+| **`PlexusX.exe`** | Standalone Portable Executable | 448 KB | `9c74c6724d45f88abea251e9203b0c461cfda40701359a5b03d0d25e80f917fb` |
+| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 699 KB | `21d3602c3845cd306e6228c1368e0703d520cfd291f91023ae191761c69cb9b1` |
 
 ### Verifying File Integrity
 
@@ -195,13 +195,45 @@ Both executables are **linked** as GUI programs (`-Wl,--subsystem,windows`), whi
 
 ### Running Automated Verification Tests
 ```bash
-# colour math (the real app/src/color_math.h): 5x5 matrix, W' safety, hue, ramps, ramps.dat validation
-gcc -std=c11 -Wall -Werror -O2 -o tests/test_runner tests/test_all.c -lm
-./tests/test_runner
+# 23 unit & integration suites (227,642 checks): colour math (the real
+# app/src/color_math.h), settings round-trip, presets, display classification,
+# window events, diagnostics JSON ring, applied-vs-requested state machine
+gcc -std=c11 -Wall -Wextra -Werror -O2 -o /tmp/test_runner tests/test_all.c -lm && /tmp/test_runner
 
-# engine.c itself against mocked Win32 display APIs (AddressSanitizer + UBSan)
+# engine.c itself against mocked Win32 display APIs (AddressSanitizer + UBSan):
+# 19 scenarios / 132 checks incl. green-cast invariants, ramp restore, resync
 sh tests/host/run.sh
+
+# web preview parity: regenerate the golden from the C kernel and diff the
+# browser port (site/assets/color_engine.js) against it — tolerance 3e-4,
+# 16-bit LUT entries within one rounding step
+gcc -std=gnu11 -O2 -Iapp/src tests/parity_gen.c -o /tmp/parity -lm && /tmp/parity > /tmp/parity.json
+node scripts/site_parity.js --golden /tmp/parity.json
 ```
+
+### Game Output Path — What PlexusX Can and Cannot Control
+
+PlexusX renders through the two legitimate desktop colour layers Windows exposes to user mode:
+the Magnification colour matrix (applied by DWM to composited output) and per-display gamma-ramp
+LUTs (the GPU CRTC lookup table). What that means in practice, reported honestly by the app itself:
+
+| Output mode | Matrix (`MagSet*`) | Gamma LUT (`SetDeviceGammaRamp`) | App verdict |
+| :--- | :---: | :---: | :--- |
+| Desktop / Explorer | ✅ | ✅ | `FULL` |
+| Borderless & windowed games (DWM-composited) | ✅ | ✅ | `FULL` |
+| True exclusive-fullscreen games | ❌ bypasses DWM composition | ✅ CRTC LUT still applies | `LIMITED (CURVES ONLY)` |
+| HDR content on the display | — | — | `PASSTHROUGH` — tone-mapping owns the CRTC LUT, PlexusX stays off and says so |
+
+No user-mode API can colour-transform exclusive-fullscreen swap-chain output without touching
+the game process, and PlexusX will not do that. Instead the display card, the tray tooltip and
+the diagnostics JSON report which half is live, per display, with the last error code. ALT+TAB
+re-assertion is event-driven (foreground events + one coalesced mode-stable follow-up) — there
+are no arbitrary `Sleep`s and no CPU polling.
+
+The website preview pages (`site/preview.html`, the hero and stage canvases) run the *exact* same
+transform — `site/assets/color_engine.js` is a faithful port of `app/src/color_math.h` verified in CI
+against a golden generated by the C code itself. A browser cannot and does not touch your real
+display; the preview simulates the math, nothing more.
 
 ---
 

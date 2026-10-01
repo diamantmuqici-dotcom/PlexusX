@@ -1,19 +1,23 @@
-/* ═══════════ PlexusX — style ═══════════ */
+/* ═══════════ PlexusX — style ═══════════
+ * Palettes are NOT defined here: every color resolves to the shared design
+ * tokens (assets/tokens.css), which mirror the native UI (app/src/ui_theme.h).
+ * Marketing-only extras (radii/shadows/fonts) stay local below. */
+@import url("tokens.css");
 :root{
-  --bg:#0b0b0f;
-  --bg2:#101016;
-  --panel:#15151d;
-  --card:#17171f;
-  --card2:#1e1e28;
-  --line:#282836;
-  --txt:#f2f2f5;
-  --sub:#8f8f9d;
-  --dim:#63636f;
-  --acc:#c6ff3d;
-  --acc-deep:#9be00f;
-  --vio:#7b5cff;
-  --cyan:#4fe3ff;
-  --dang:#ff5c5c;
+  --bg:var(--px-bg);
+  --bg2:var(--px-side);
+  --panel:var(--px-surface);
+  --card:var(--px-surface);
+  --card2:var(--px-surface-hover);
+  --line:var(--px-border);
+  --txt:var(--px-text);
+  --sub:var(--px-text-sub);
+  --dim:var(--px-text-dim);
+  --acc:var(--px-accent);
+  --acc-deep:var(--px-accent-deep);
+  --vio:var(--px-violet);
+  --cyan:var(--px-cyan);
+  --dang:var(--px-danger);
   --r:14px;
   --r-lg:22px;
   --font-d:"Space Grotesk",system-ui,sans-serif;
@@ -554,3 +558,18 @@ p{margin:0 0 1em}
   *{animation-duration:.01ms!important;transition-duration:.01ms!important}
   html{scroll-behavior:auto}
 }
+
+/* ---------- engine canvas overlay (pixel-accurate preview, shared math) ---------- */
+.stage-frame{position:relative}
+.engine-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:block}
+.compare-after .engine-canvas{width:100vw;max-width:none;height:100%}
+.engine-canvas,.compare-after .engine-canvas{object-fit:cover}
+
+/* chips used on the preview page (token-driven) */
+.px-chip{display:inline-flex;align-items:center;gap:6px;font:700 10px/1 var(--font-m);
+  letter-spacing:.12em;padding:7px 12px;border-radius:999px;border:1px solid var(--line);
+  background:var(--card);color:var(--sub)}
+.px-chip[data-tone="ok"]{color:var(--ok);border-color:rgba(79,227,120,.35)}
+.px-chip[data-tone="warn"]{color:var(--warn);border-color:rgba(255,196,61,.35)}
+.px-chip[data-tone="bad"]{color:var(--bad);border-color:rgba(255,80,80,.35)}
+.px-chip[data-tone="info"]{color:var(--cyan);border-color:rgba(79,227,255,.35)}

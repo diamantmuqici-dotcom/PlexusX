@@ -1,33 +1,44 @@
-/* PlexusX — Engine: Windows Magnification API Color Matrix + GPU Gamma Ramps
- * Supports: NVIDIA, AMD, Intel, SDR, HDR, Multi-monitor.
- * Anti-cheat safe: Legit OS display APIs only. Zero game process touching.
+/* PlexusX — ColorPipeline implementation: Windows Magnification matrix + GPU
+ * gamma ramps + crash recovery.  This is the ONLY module allowed to talk to
+ * MagSetFullscreenColorEffect / SetDeviceGammaRamp.
  *
- * Pipeline split (see color_math.h for the math, which is shared with the tests):
- *   - DWM 5x5 matrix  : every LINEAR adjustment (hue, saturation, vibrance,
- *                       temperature, tint, RGB gain, brightness, contrast,
- *                       black level, white point).
- *   - GPU gamma ramp  : only NON-LINEAR curves (gamma, shadows toe, highlights
- *                       shoulder, clarity).  SetDeviceGammaRamp is never called
- *                       for neutral curves, nor when the ramp is unchanged.
+ * Anti-cheat safe: legit OS display APIs only, zero game process touching.
+ * The DWM 5x5 matrix affects DWM-COMPOSITED content (desktop, windowed and
+ * borderless games).  DirectX exclusive-fullscreen / flip-model surfaces
+ * bypass DWM composition — the matrix provably cannot reach them through any
+ * legitimate user-mode API; the tone-curve half (the scanout LUT) still does.
+ * The color engine reports that split honestly (see PxGameDisplayState).
+ *
+ * Pipeline split (see color/color_math.h for the shared math kernel):
+ *   - DWM 5x5 matrix : every LINEAR adjustment (hue, saturation, vibrance,
+ *                      temperature, tint, RGB gain, brightness, contrast,
+ *                      black level, white point).
+ *   - GPU gamma ramp : only NON-LINEAR curves (gamma, shadows toe, highlights
+ *                      shoulder, clarity).  SetDeviceGammaRamp is never called
+ *                      for neutral curves, nor when the ramp is unchanged.
  */
 #include "common.h"
+#include "color_pipeline.h"
 #include "color_math.h"
 
 /* Magnification API.  MagColorEffect (color_math.h) is float transform[5][5],
  * exactly the 100-byte Win32 MAGCOLOREFFECT, row-vector convention [R G B A 1]*M:
- * translation in row 4 (transform[4][0..2]), column 4 strictly [0,0,0,0,1]. */
+ * translation in row 4 (transform[4][0..2]), column 4 strictly [0,0,0,0,1].
+ * MagGetFullscreenColorEffect exists on the same DLL and lets us VERIFY that
+ * the DWM still holds what we sent (ALT+TAB / GPU resets drop it). */
 typedef BOOL (WINAPI *fn_MagInitialize)(void);
 typedef BOOL (WINAPI *fn_MagUninitialize)(void);
 typedef BOOL (WINAPI *fn_MagSetFullscreenColorEffect)(MagColorEffect *);
+typedef BOOL (WINAPI *fn_MagGetFullscreenColorEffect)(MagColorEffect *);
 
 static fn_MagInitialize               p_MagInit;
 static fn_MagUninitialize             p_MagUninit;
 static fn_MagSetFullscreenColorEffect p_MagSetFx;
+static fn_MagGetFullscreenColorEffect p_MagGetFx;
 static int            g_mag_ok = 0;
-static MagColorEffect g_fx_curr;          /* last effect DWM accepted */
-static int            g_fx_known = 0;     /* g_fx_curr is trustworthy (cleared by Eng_Resync) */
-
-_Static_assert(sizeof(WORD) == sizeof(unsigned short), "WORD must match the ramp type used by color_math.h");
+static int            g_mag_readback = 0;      /* p_MagGetFx resolved */
+static MagColorEffect g_fx_curr;               /* last effect DWM accepted */
+static int            g_fx_known = 0;          /* g_fx_curr is trustworthy (cleared by PxPipe_Resync) */
 
 #define MAX_DISP 8
 typedef struct DispDC {
@@ -37,55 +48,23 @@ typedef struct DispDC {
     WORD    orig[3][256];   /* ramp the display had before PlexusX touched it (validated / identity fallback) */
     WORD    curr[3][256];   /* ramp PlexusX last programmed == what the hardware holds (== orig until first write) */
     int     have_orig;
-    int     have_curr;      /* curr is trustworthy (cleared by Eng_Resync after external resets) */
+    int     have_curr;      /* curr is trustworthy (cleared by PxPipe_Resync after external resets) */
 } DispDC;
 
 static DispDC  g_disp[MAX_DISP];
 static int     g_ndisp = 0;
 static int     g_target_disp = -1; /* -1 = all displays */
-static int     g_eng_ready = 0;
-
-static Look    g_requested = LOOK_NEUTRAL_INIT;
-static Look    g_applied   = LOOK_NEUTRAL_INIT;
-static int     g_applied_ok = 0;
-static const wchar_t *g_invalidate_why = L"startup";
-
-static GpuInfo g_gpu_info;
 
 static wchar_t g_ramps_path[MAX_PATH];
 static wchar_t g_dirty_path[MAX_PATH];
 static int     g_dirty_start = 0;
 static int     g_dirty_marked = 0;     /* dirty.flg currently exists: don't hit the disk on every slider tick */
-static int     g_orig_trusted = 0;     /* DispDC.orig really is the pre-PlexusX ramp.  FALSE between capturing the
-                                        * ramps and finishing crash recovery on a dirty start: what the GPU holds
-                                        * then may still be the previous session's modified ramp. */
-
-/* ---------------- Kelvin to RGB Approximation (Planckian Locus) ---------------- */
-void Eng_KelvinToRgb(float k, float *r, float *g, float *b)
-{
-    cm_kelvin_to_rgb(k, r, g, b);
-}
-
-/* ---------------- Hardware GPU Gamma Ramp Calculation ---------------- */
-/* Non-linear curves ONLY (gamma, shadows toe, highlights shoulder, clarity).
- * Linear adjustments (RGB gain, black level, white point, brightness, contrast)
- * live in the DWM matrix; applying them here too would count them twice. */
-void Eng_CalculateGammaRamp(const Look *lk, WORD ramp[3][256])
-{
-    cm_calc_ramp(lk, ramp);
-
-    /* Last line of defence at the hardware boundary: WDDM needs non-decreasing ramps
-     * (a toe lift on top of a steep gamma can dip), whatever produced the data.
-     * Same clamp as cm_ramp_make_monotonic(), kept explicit here on purpose. */
-    for (int ch = 0; ch < 3; ch++) {
-        for (int i = 1; i < 256; i++) {
-            if (ramp[ch][i] < ramp[ch][i - 1]) ramp[ch][i] = ramp[ch][i - 1];
-        }
-    }
-}
+static int     g_orig_trusted = 0;    /* DispDC.orig really is the pre-PlexusX ramp.  FALSE between capturing the
+                                       * ramps and finishing crash recovery on a dirty start: what the GPU holds
+                                       * then may still be the previous session's modified ramp. */
 
 /* ---------------- Crash Recovery & Dirty Flag File ---------------- */
-void Eng_SetPaths(const wchar_t *ramps, const wchar_t *dirty, int was_dirty)
+void PxPipe_SetPaths(const wchar_t *ramps, const wchar_t *dirty, int was_dirty)
 {
     lstrcpynW(g_ramps_path, ramps, MAX_PATH);
     lstrcpynW(g_dirty_path, dirty, MAX_PATH);
@@ -188,43 +167,6 @@ static int load_ramps_file(void)
     return applied;
 }
 
-/* ---------------- GPU Detection ---------------- */
-static void detect_gpu(void)
-{
-    memset(&g_gpu_info, 0, sizeof g_gpu_info);
-    g_gpu_info.vendor = GPU_VENDOR_UNKNOWN;
-    lstrcpyW(g_gpu_info.vendor_name, L"Generic Display");
-    lstrcpyW(g_gpu_info.name, L"Display Adapter");
-
-    DISPLAY_DEVICEW dd;
-    memset(&dd, 0, sizeof dd);
-    dd.cb = sizeof dd;
-
-    for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &dd, 0); i++) {
-        if (dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) {
-            lstrcpynW(g_gpu_info.name, dd.DeviceString, 128);
-
-            /* Check vendor name from device string or device ID */
-            if (wcsstr(dd.DeviceString, L"NVIDIA") || wcsstr(dd.DeviceID, L"VEN_10DE")) {
-                g_gpu_info.vendor = GPU_VENDOR_NVIDIA;
-                lstrcpyW(g_gpu_info.vendor_name, L"NVIDIA");
-            } else if (wcsstr(dd.DeviceString, L"AMD") || wcsstr(dd.DeviceString, L"Radeon") ||
-                       wcsstr(dd.DeviceID, L"VEN_1002")) {
-                g_gpu_info.vendor = GPU_VENDOR_AMD;
-                lstrcpyW(g_gpu_info.vendor_name, L"AMD");
-            } else if (wcsstr(dd.DeviceString, L"Intel") || wcsstr(dd.DeviceID, L"VEN_8086")) {
-                g_gpu_info.vendor = GPU_VENDOR_INTEL;
-                lstrcpyW(g_gpu_info.vendor_name, L"Intel");
-            }
-            break;
-        }
-    }
-
-    g_gpu_info.mag_available = g_mag_ok;
-    g_gpu_info.gamma_available = (g_ndisp > 0);
-    g_gpu_info.hdr_detected = 0; /* Will be updated via display enumeration */
-}
-
 /* ---------------- Reset / Restore ---------------- */
 
 /* Puts the desktop back to the original state: identity colour matrix and the
@@ -268,15 +210,17 @@ static void reset_all(int force)
     if (ok && g_ndisp > 0) clear_dirty();
 }
 
-/* ---------------- Public Functions ---------------- */
+/* ---------------- Init / Shutdown ---------------- */
 
-void Eng_Init(void)
+int PxPipe_Init(void)
 {
     HMODULE h = LoadLibraryW(L"magnification.dll");
     if (h) {
         p_MagInit = (fn_MagInitialize)GetProcAddress(h, "MagInitialize");
         p_MagUninit = (fn_MagUninitialize)GetProcAddress(h, "MagUninitialize");
         p_MagSetFx = (fn_MagSetFullscreenColorEffect)GetProcAddress(h, "MagSetFullscreenColorEffect");
+        p_MagGetFx = (fn_MagGetFullscreenColorEffect)GetProcAddress(h, "MagGetFullscreenColorEffect");
+        g_mag_readback = p_MagGetFx ? 1 : 0;
         g_mag_ok = p_MagInit && p_MagSetFx && p_MagInit();
     }
     cm_identity(&g_fx_curr);
@@ -318,8 +262,6 @@ void Eng_Init(void)
         g_ndisp++;
     }
 
-    detect_gpu();
-
     if (g_dirty_start) {
         /* The previous session died while it had modified the ramps.  Restore the
          * ramps it saved at its clean start — validated first. */
@@ -343,10 +285,10 @@ void Eng_Init(void)
         }
         save_ramps_file();
     }
-    g_eng_ready = 1;
+    return (g_mag_ok || g_ndisp > 0) ? 1 : 0;
 }
 
-void Eng_Shutdown(void)
+void PxPipe_Shutdown(void)
 {
     reset_all(0);
     for (int i = 0; i < g_ndisp; i++) {
@@ -358,156 +300,137 @@ void Eng_Shutdown(void)
     g_ndisp = 0;
     if (g_mag_ok && p_MagUninit) p_MagUninit();
     g_mag_ok = 0;
-    g_eng_ready = 0;
     g_orig_trusted = 0;
 }
 
-int  Eng_Available(void) { return g_mag_ok; }
+int  PxPipe_MagAvailable(void) { return g_mag_ok; }
+int  PxPipe_RampDisplays(void) { return g_ndisp; }
 
-void Eng_SetTargetMonitor(int idx)
-{
-    g_target_disp = idx;
-}
+void PxPipe_SetTargetDisplay(int idx) { g_target_disp = idx; }
+int  PxPipe_GetTargetDisplay(void)    { return g_target_disp; }
 
-int  Eng_GetTargetMonitor(void)
-{
-    return g_target_disp;
-}
+int  PxPipe_BackupOriginals(void)  { save_ramps_file(); return g_ndisp; }
+int  PxPipe_RestoreOriginals(void) { return load_ramps_file(); }
 
-const GpuInfo *Eng_GetGpuInfo(void)
-{
-    return &g_gpu_info;
-}
-
-void Eng_BackupCurrentState(void)
-{
-    save_ramps_file();
-}
-
-int  Eng_RestoreLastGood(void)
-{
-    return load_ramps_file();
-}
-
-/* Forget what we believe the hardware holds.  Call after anything that may have
- * reset the display pipeline behind our back (display mode change, a game taking
- * over, the periodic refresh): the next Eng_Apply() re-asserts the look even though
- * it is unchanged. */
-void Eng_Resync(void)
+/* Forget what we believe the hardware holds.  Called after anything that may
+ * have reset the display pipeline behind our back (display mode change, a game
+ * taking over, session unlock): the next PxPipe_Run() re-asserts even though
+ * the look is unchanged. */
+void PxPipe_Resync(void)
 {
     g_fx_known = 0;
     for (int d = 0; d < g_ndisp; d++) g_disp[d].have_curr = 0;
 }
 
-/* Forget cached GPU/DWM state.  The user's requested look is never overwritten:
- * a focus loss, exclusive-fullscreen game, or device reset only invalidates
- * *applied* hardware, which Eng_Reassert() / Eng_Apply() then restores. */
-void Eng_Invalidate(const wchar_t *reason)
-{
-    if (reason && reason[0]) g_invalidate_why = reason;
-    Eng_Resync();
-}
-
-void Eng_Reassert(void)
-{
-    if (!g_eng_ready) return;
-    Eng_Apply(&g_requested);
-}
-
-const Look *Eng_GetRequested(void) { return &g_requested; }
-const Look *Eng_GetApplied(void)   { return g_applied_ok ? &g_applied : NULL; }
-int Eng_RequestedMatchesApplied(void)
-{
-    return g_applied_ok && cm_looks_equal(&g_requested, &g_applied);
-}
-const wchar_t *Eng_LastInvalidateReason(void) { return g_invalidate_why; }
+/* ---------------- Apply ---------------- */
 
 /* Linear half of the look -> DWM.  The effect is sanitised (NaN/Inf -> identity,
- * weights clamped to [-4, 4], column 4 == [0,0,0,0,1]) inside cm_build_effect(),
- * and nothing is sent when it equals what DWM already has. */
-static int apply_matrix(const Look *lk)
+ * weights scaled toward identity to stay in [-4, 4], column 4 == [0,0,0,0,1])
+ * inside PxPlan_Compute() / cm_build_effect(); the final cm_sanitize() below is
+ * the last gate before the API.  Nothing is sent when it equals what DWM
+ * already holds; a successful send is READ BACK when the OS exposes
+ * MagGetFullscreenColorEffect so "desktop output active" is verified, not
+ * assumed. */
+static void apply_matrix(const PxTransformPlan *plan, PxPipelineResult *out)
 {
-    if (!g_mag_ok) return 1;          /* no DWM path: treat as success so ramps can still run */
-
-    MagColorEffect fx;
-    cm_build_effect(lk, &fx);
-    cm_sanitize(&fx);                 /* last gate before DWM: NaN/Inf -> identity, 3x3 scaled toward identity, W' column [0,0,0,0,1] */
-
-    if (g_fx_known && memcmp(&g_fx_curr, &fx, sizeof fx) == 0) return 1;
-
-    MagColorEffect tmp = fx;          /* the API takes a non-const pointer */
-    if (p_MagSetFx(&tmp)) {
-        g_fx_curr = fx;
-        g_fx_known = 1;
-        return 1;
+    out->matrix_supported = g_mag_ok;
+    if (!g_mag_ok) {                       /* no DWM path: treat as success so ramps can still run */
+        out->matrix_ok = 1;
+        return;
     }
-    return 0;
+
+    MagColorEffect fx = plan->effect;
+    cm_sanitize(&fx);
+
+    if (g_fx_known && memcmp(&g_fx_curr, &fx, sizeof fx) == 0) {
+        out->matrix_ok = 1;                /* already exactly this */
+        return;
+    }
+
+    MagColorEffect tmp = fx;               /* the API takes a non-const pointer */
+    if (!p_MagSetFx(&tmp)) return;         /* matrix_ok stays 0 -> PARTIAL/FAILED outcome */
+    g_fx_curr = fx;
+    g_fx_known = 1;
+    out->matrix_sent = 1;
+    out->matrix_ok = 1;
+
+    if (g_mag_readback) {
+        MagColorEffect rb;
+        cm_identity(&rb);
+        if (p_MagGetFx(&rb)) {
+            out->matrix_verified = 1;
+            out->matrix_held = (memcmp(&rb, &fx, sizeof fx) == 0);
+        }
+    } else {
+        out->matrix_verified = 0;
+        out->matrix_held = 1;              /* unverified but acknowledged */
+    }
 }
 
 /* Non-linear half of the look -> GPU ramps, one display at a time.
- * cm_ramp_plan() decides whether a write is needed at all:
- *   - gamma==1.0 && shadows==100 && highlights==100 && clarity==100: no call
- *     (the original ramp is restored once if we had changed it)
- *   - computed ramp == curr: no call, so dragging colour sliders never makes the
- *     driver re-sync the display pipeline. */
-static int apply_ramps(const Look *lk)
+ * PxPlan_RampForDisplay() (the transform layer's per-display plan step) decides
+ * whether a write is needed at all:
+ *   - neutral curves / bypass: no call (the original ramp is restored once if
+ *     we had changed it)
+ *   - computed ramp == curr: no call, so dragging colour sliders never makes
+ *     the driver re-sync the display pipeline. */
+static void apply_ramps(const PxTransformPlan *plan, PxPipelineResult *out)
 {
-    if (!g_ndisp) return 1;
-
-    static const Look neutral = LOOK_NEUTRAL_INIT;
-    int ok = 1;
+    out->ramps_ok = 1;
+    out->displays_prepared = g_ndisp;
+    if (!g_ndisp) return;
 
     for (int d = 0; d < g_ndisp; d++) {
         DispDC *dd = &g_disp[d];
         if (!dd->have_orig) continue;
 
         /* Displays outside the current target simply return to their own ramp */
-        const Look *dl = (g_target_disp >= 0 && g_target_disp != d) ? &neutral : lk;
+        PxTransformPlan neutral;
+        const PxTransformPlan *dp = plan;
+        if (g_target_disp >= 0 && g_target_disp != d) {
+            Look n = (Look)LOOK_NEUTRAL_INIT;
+            PxPlan_Compute(&n, &neutral);
+            dp = &neutral;
+        }
 
         WORD want[3][256];
-        if (!cm_ramp_plan(dd->orig, dd->curr, dd->have_curr, dl, want)) continue;
+        if (!PxPlan_RampForDisplay(dp, dd->orig, dd->curr, dd->have_curr, want)) continue;
 
         /* About to leave the original ramp: crash recovery has to know */
         if (memcmp(want, dd->orig, sizeof want) != 0) mark_dirty();
-        if (!write_ramp(dd, want)) ok = 0;
+        if (!write_ramp(dd, want)) out->ramps_ok = 0;
+        else out->ramps_called++;
     }
 
     /* Every display is back on its original ramp: nothing is left for crash recovery to undo */
     for (int d = 0; d < g_ndisp; d++) {
-        if (g_disp[d].have_orig && memcmp(g_disp[d].curr, g_disp[d].orig, sizeof g_disp[d].curr) != 0) return ok;
+        if (g_disp[d].have_orig && memcmp(g_disp[d].curr, g_disp[d].orig, sizeof g_disp[d].curr) != 0) return;
     }
     clear_dirty();
-    return ok;
 }
 
-void Eng_Apply(const Look *lk)
+void PxPipe_Run(const PxTransformPlan *plan, PxPipelineResult *out)
 {
-    if (!g_eng_ready) return;
-    if (lk) {
-        g_requested = *lk;
-        cm_sanitize_look(&g_requested);
-    }
+    memset(out, 0, sizeof *out);
+    if (!plan) return;
 
-    Look safe = g_requested;
-
-    if (!safe.enabled) {
-        reset_all(0);          /* bypassed: neutral display, only undo what we changed */
-        g_applied = safe;
-        g_applied_ok = 1;
+    if (plan->bypassed) {
+        out->restore_only = 1;
+        /* bypassed: neutral display, only undo what we changed */
+        reset_all(0);
+        out->matrix_supported = g_mag_ok;
+        out->matrix_ok = 1;
+        out->ramps_ok = 1;
         return;
     }
 
-    int mok = apply_matrix(&safe);
-    int rok = apply_ramps(&safe);
-    if (mok && rok) {
-        g_applied = safe;
-        g_applied_ok = 1;
-    }
+    apply_matrix(plan, out);
+    apply_ramps(plan, out);
 }
 
 /* Forced, unconditional restore: identity colour matrix + original gamma ramps.
  * Used by the reset buttons, the emergency hotkey and the crash handler. */
-void Eng_Reset(void)
+void PxPipe_ForceReset(void)
 {
     reset_all(1);
 }

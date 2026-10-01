@@ -30,10 +30,11 @@
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
       <a href="#faq">FAQ</a>
+      <a href="preview.html">Live preview</a>
     </nav>
     <div style="display:flex;gap:10px;align-items:center;">
       <a class="btn btn-sm btn-ghost" href="download/PlexusX-Setup.exe" download="PlexusX-Setup.exe">Setup.exe</a>
-      <a class="btn btn-sm btn-primary" href="download/PlexusX.exe" download="PlexusX.exe">Portable.exe<span class="btn-sub">v2.0.0 · free</span></a>
+      <a class="btn btn-sm btn-primary" href="download/PlexusX.exe" download="PlexusX.exe">Portable.exe<span class="btn-sub">v2.2.0 · free</span></a>
     </div>
   </div>
 </header>
@@ -45,7 +46,7 @@
   <div class="hero-glow" aria-hidden="true"></div>
   <div class="hero-in">
     <div class="hero-copy">
-      <p class="eyebrow"><span class="pulse"></span>Windows 10 / 11 x64 · v2.0.0 · <b>100% Free Forever</b></p>
+      <p class="eyebrow"><span class="pulse"></span>Windows 10 / 11 x64 · v2.2.0 · <b>100% Free Forever</b></p>
       <h1>YOUR DISPLAY.<br>YOUR COLORS.<br><span class="grad">YOUR GAMES.</span></h1>
       <p class="lead">A free, elite Windows gaming display and visual control center.
         Pushes monitor saturation to <strong>300%</strong>, smart vibrance, hardware GPU gamma ramps,
@@ -54,7 +55,7 @@
       <div class="hero-cta">
         <a class="btn btn-primary btn-lg" href="download/PlexusX.exe" download="PlexusX.exe">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-          Download Portable (347 KB)</a>
+          Download Portable (448 KB)</a>
         <a class="btn btn-ghost btn-lg" href="download/PlexusX-Setup.exe" download="PlexusX-Setup.exe">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
           Download Setup (Installer)</a>
@@ -82,9 +83,11 @@
           <input class="range" type="range" min="100" max="300" value="240" id="heroSat" aria-label="Saturation preview">
           <div class="hud-scale mono"><span>100 · neutral</span><span>300% application boost</span></div>
         </div>
-        <span class="hud-badge mono">PLEXUSX · SDR &amp; HDR OPTIMIZED</span>
+        <span class="hud-badge mono">PLEXUSX · SDR PIPELINE · HDR-AWARE</span>
       </div>
-      <p class="fineprint">Rendered by your browser — the actual application runs on the Windows Magnification &amp; GPU Gamma layer.</p>
+      <p class="fineprint">Rendered live by the <b>same color kernel</b> the app ships (exact JS port of
+        <code>color_math.h</code>, parity-checked in CI) — a browser preview of the math, not a capture of your display.
+        The application itself applies it through the Windows Magnification &amp; GPU gamma-ramp layer.</p>
     </div>
   </div>
 </section>
@@ -260,7 +263,7 @@
     <div class="mock reveal" id="mock">
       <div class="mock-titlebar">
         <span class="mock-logo"><span class="brand-mark sm"></span>PLEXUSX</span>
-        <span class="mock-toast mono" id="mockToast">● v2.0.0 · everything unlocked · no pro tier</span>
+        <span class="mock-toast mono" id="mockToast">● v2.2.0 · everything unlocked · no pro tier</span>
         <span class="mock-cap"><i>—</i><i>✕</i></span>
       </div>
       <div class="mock-body">
@@ -368,7 +371,7 @@
             <div class="mock-toggle-row"><span>LAN Phone Remote (Port 8777)</span><button class="sw on" aria-pressed="true"><i></i></button></div>
             <div class="mock-url mono">http://192.168.1.100:8777 (PIN: 8492) <button class="mbtn tiny" id="copyUrl">Copy link</button></div>
             <p class="mock-div">ABOUT PLEXUSX</p>
-            <p class="mock-about">PlexusX v2.0.0 · Windows 10/11 x64 · 100% Free Open Source.<br>
+            <p class="mock-about">PlexusX v2.2.0 · Windows 10/11 x64 · 100% Free Open Source.<br>
               Zero telemetry · No account · No cloud requirement · Local config only.<br>
               Anti-cheat safe: Legit Windows Magnification &amp; GDI Gamma APIs only.</p>
           </div>
@@ -433,6 +436,17 @@
       </article>
     </div>
 
+      <article class="how-card reveal">
+        <span class="how-num mono">04</span>
+        <h3>How Games Are Detected — and What Each Mode Can Do</h3>
+        <p>PlexusX listens to foreground/session events (no CPU polling). Composited desktop, borderless and
+          windowed games get the <strong>full</strong> effect. A title rendered in true <em>exclusive fullscreen</em>
+          bypasses the desktop compositor, so only the GPU gamma-ramp half can reach it — the app shows
+          <code>LIMITED (CURVES ONLY)</code> for that display instead of pretending the matrix landed.
+          HDR content is detected and passed through untouched. On ALT+TAB the engine re-asserts from
+          focus events (coalesced, no arbitrary timers) and the Diagnostics page reports
+          requested-vs-applied state per display.</p>
+      </article>
     <div class="never reveal">
       <h3>Strict Anti-Cheat &amp; Fair Play Guarantee</h3>
       <ul>
@@ -453,15 +467,15 @@
     <div class="dl reveal">
       <div class="dl-left">
         <p class="eyebrow">OFFICIAL RELEASES</p>
-        <h2>Download PlexusX v2.0.0</h2>
+        <h2>Download PlexusX v2.2.0</h2>
         <p class="section-lead">Choose your preferred build: portable standalone executable or setup installer with Desktop &amp; Start Menu shortcuts. Both are 100% free and open source.</p>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px;">
           <a class="btn btn-primary btn-lg" href="download/PlexusX.exe" download="PlexusX.exe">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-            Download Portable EXE (347 KB)</a>
+            Download Portable EXE (448 KB)</a>
           <a class="btn btn-ghost btn-lg" href="download/PlexusX-Setup.exe" download="PlexusX-Setup.exe">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-            Download Setup Installer (598 KB)</a>
+            Download Setup Installer (699 KB)</a>
         </div>
         <p class="dl-meta">Windows 10 / 11 x64 · NVIDIA · AMD · Intel · Apache-2.0</p>
       </div>
@@ -469,9 +483,9 @@
         <div class="hash-card">
           <p class="hash-label">SHA-256 Checksums</p>
           <p style="font-size:12px;color:#8a8a9a;margin-bottom:4px;">PlexusX.exe (Portable):</p>
-          <code class="mono hash-val" style="word-break:break-all;display:block;margin-bottom:12px;">04f6f6cdb82410a9e25d800b31f8b7a8bb743a02c51de02a77540cfd892b04af</code>
+          <code class="mono hash-val" style="word-break:break-all;display:block;margin-bottom:12px;">9c74c6724d45f88abea251e9203b0c461cfda40701359a5b03d0d25e80f917fb</code>
           <p style="font-size:12px;color:#8a8a9a;margin-bottom:4px;">PlexusX-Setup.exe (Installer):</p>
-          <code class="mono hash-val" style="word-break:break-all;display:block;">52b082ed72c6f654e263bc583a4d63c023ca014a74b78e3ce826ef26bf040547</code>
+          <code class="mono hash-val" style="word-break:break-all;display:block;">21d3602c3845cd306e6228c1368e0703d520cfd291f91023ae191761c69cb9b1</code>
         </div>
       </div>
     </div>
@@ -530,6 +544,7 @@
         <h4>Integrity</h4>
         <a href="#how">Anti-Cheat Safety</a>
         <a href="#faq">FAQ</a>
+      <a href="preview.html">Live preview</a>
         <a href="download/SHA256SUMS.txt">SHA-256 Sums</a>
       </div>
       <div>
@@ -542,6 +557,7 @@
   </div>
 </footer>
 
+<script src="assets/color_engine.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

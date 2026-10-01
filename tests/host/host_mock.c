@@ -8,6 +8,13 @@ MockDisplay g_mock_disp[MOCK_MAX_DISP];
 int g_mock_set_total, g_mock_mag_calls, g_mock_mag_bad, g_mock_mag_init, g_mock_mag_uninit, g_mock_dirty_creates;
 MagColorEffect g_mock_mag_last;
 void (*g_mock_hook_get_ramp)(int display_index);
+int g_mock_mag_set_fail = 0;          /* force MagSetFullscreenColorEffect to fail */
+int g_mock_mag_noreadback = 0;        /* pretend the OS lacks MagGetFullscreenColorEffect */
+int g_mock_mag_readback_drift = 0;    /* readback returns identity: DWM dropped the effect */
+int g_mock_dm_report_mag, g_mock_dm_report_ramps, g_mock_dm_report_calls;
+
+static DWORD g_tick = 1000;
+DWORD GetTickCount(void) { g_tick += 13; return g_tick; }
 
 /* ---- Magnification API ---- */
 static BOOL mock_MagInitialize(void) { g_mock_mag_init++; return TRUE; }
@@ -15,6 +22,7 @@ static BOOL mock_MagUninitialize(void) { g_mock_mag_uninit++; return TRUE; }
 static BOOL mock_MagSetFullscreenColorEffect(MagColorEffect *e)
 {
     g_mock_mag_calls++;
+    if (g_mock_mag_set_fail) return FALSE;
     g_mock_mag_last = *e;
     /* the DWM contract: finite, bounded weights, column 4 == [0 0 0 0 1] */
     for (int r = 0; r < 5; r++) for (int c = 0; c < 5; c++) {
@@ -25,6 +33,12 @@ static BOOL mock_MagSetFullscreenColorEffect(MagColorEffect *e)
     if (e->transform[4][4] != 1.0f) g_mock_mag_bad++;
     return TRUE;
 }
+static BOOL mock_MagGetFullscreenColorEffect(MagColorEffect *e)
+{
+    if (g_mock_mag_readback_drift) { cm_identity(e); return TRUE; }   /* "DWM forgot" */
+    *e = g_mock_mag_last;
+    return TRUE;
+}
 HMODULE LoadLibraryW(const wchar_t *n) { (void)n; return (HMODULE)0x1000; }
 FARPROC GetProcAddress(HMODULE m, const char *name)
 {
@@ -32,7 +46,17 @@ FARPROC GetProcAddress(HMODULE m, const char *name)
     if (!strcmp(name, "MagInitialize")) return (FARPROC)mock_MagInitialize;
     if (!strcmp(name, "MagUninitialize")) return (FARPROC)mock_MagUninitialize;
     if (!strcmp(name, "MagSetFullscreenColorEffect")) return (FARPROC)mock_MagSetFullscreenColorEffect;
+    if (!strcmp(name, "MagGetFullscreenColorEffect"))
+        return g_mock_mag_noreadback ? NULL : (FARPROC)mock_MagGetFullscreenColorEffect;
     return NULL;
+}
+
+/* ---- display-manager seam: the engine reports pipeline capability here ---- */
+void Dm_ReportOutputs(int mag_available, int ramp_displays)
+{
+    g_mock_dm_report_calls++;
+    g_mock_dm_report_mag = mag_available;
+    g_mock_dm_report_ramps = ramp_displays;
 }
 
 /* ---- displays / gamma ramps ---- */

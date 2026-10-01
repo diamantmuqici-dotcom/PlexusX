@@ -9,6 +9,8 @@ extern int g_mock_set_total;
 extern int g_mock_mag_calls, g_mock_mag_bad, g_mock_mag_init, g_mock_mag_uninit;
 extern MagColorEffect g_mock_mag_last;
 extern int g_mock_dirty_creates;
+extern int g_mock_mag_set_fail, g_mock_mag_noreadback, g_mock_mag_readback_drift;
+extern int g_mock_dm_report_mag, g_mock_dm_report_ramps, g_mock_dm_report_calls;
 /* called from GetDeviceGammaRamp with the 0-based display index: lets a test run code in the middle of Eng_Init */
 extern void (*g_mock_hook_get_ramp)(int display_index);
 #endif

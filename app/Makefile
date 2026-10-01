@@ -8,11 +8,12 @@
 # subsystem (2) and the entry point of both executables.
 CC      := python3 -m ziglang cc
 CFLAGS  ?= -target x86_64-windows-gnu -O2 -std=c11 -Wall \
-           -DUNICODE -D_UNICODE -D_CRT_SECURE_NO_WARNINGS -municode
+           -DUNICODE -D_UNICODE -D_CRT_SECURE_NO_WARNINGS -municode \
+           -Isrc -Isrc/color -Isrc/display -Isrc/games -Isrc/settings -Isrc/windows -Isrc/diagnostics
 LDFLAGS ?= -Wl,--subsystem,windows
 LIBS    := -luser32 -lgdi32 -lshell32 -ladvapi32 -lws2_32 -lcomctl32 -lshlwapi -ldwmapi -lwtsapi32 -lm
-SRC     := $(wildcard src/*.c)
-HDR     := $(wildcard src/*.h)
+SRC     := $(shell find src -name '*.c' | sort)
+HDR     := $(shell find src -name '*.h' | sort)
 OUT_DIR := ../site/download
 OUT_EXE := $(OUT_DIR)/PlexusX.exe
 OUT_SET := $(OUT_DIR)/PlexusX-Setup.exe

@@ -12,10 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Automated Verification Tests
+      - name: Run unit & integration test suites
         run: |
-          gcc -std=c11 -Wall -Werror -O2 -o tests/test_runner tests/test_all.c -lm
-          ./tests/test_runner
+          gcc -std=c11 -Wall -Wextra -Werror -O2 -o /tmp/test_runner tests/test_all.c -lm
+          /tmp/test_runner
+
+      - name: Web preview parity vs the C engine kernel
+        run: |
+          gcc -std=gnu11 -Wall -Wextra -Werror -O2 -Iapp/src tests/parity_gen.c -o /tmp/parity_gen -lm
+          /tmp/parity_gen > /tmp/parity.json
+          node scripts/site_parity.js --golden /tmp/parity.json
+          cmp /tmp/parity.json site/parity.json
 
       - name: Run engine scenario tests (real engine.c against mocked Win32, ASan + UBSan)
         run: sh tests/host/run.sh
@@ -42,13 +49,13 @@ jobs:
       - name: Upload PlexusX Portable Executable
         uses: actions/upload-artifact@v4
         with:
-          name: PlexusX-v2.1.0-Portable
+          name: PlexusX-v2.2.0-Portable
           path: site/download/PlexusX.exe
 
       - name: Upload PlexusX Setup Installer
         uses: actions/upload-artifact@v4
         with:
-          name: PlexusX-v2.1.0-Setup
+          name: PlexusX-v2.2.0-Setup
           path: site/download/PlexusX-Setup.exe
 
       - name: Upload SHA-256 Checksums

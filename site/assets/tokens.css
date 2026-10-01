@@ -1,0 +1,84 @@
+/* PlexusX design tokens — the browser mirror of app/src/ui_theme.h.
+ * The native shell and the web preview share ONE token set: same surfaces,
+ * same accent, same radii scale.  Anything UI-like must reference these vars,
+ * never raw values, so a palette change is a one-file change in both worlds.
+ *
+ * Transparency/blur policy (identical rule on both sides):
+ *   - Web:    backdrop-filter used ONLY on overlay chips/cards above imagery,
+ *             with an opaque fallback (no @supports → solid surface).
+ *   - Native: layered-window alpha + DWM blur-behind (Main_ApplyChrome).
+ *   - Never a per-frame blur simulation in GDI or a CSS drop-shadow stack:
+ *     they burn GPU for nothing on a gaming overlay.
+ */
+:root {
+  /* surfaces */
+  --px-bg: #0c0c10;
+  --px-side: #10101a;            /* 16,16,22  */
+  --px-surface: #16161e;         /* 22,22,30  */
+  --px-surface-hover: #1e1e2a;   /* 30,30,42  */
+  --px-surface-active: #242434;  /* 36,36,52  */
+  --px-inset: #0a0a0e;
+  --px-on-accent: #0a0a0e;
+
+  /* structure */
+  --px-border: #2a2a3a;          /* 42,42,58 */
+  --px-grid: #1c1e2a;            /* 28,30,42 */
+
+  /* typography colors */
+  --px-text: #f2f2f8;
+  --px-text-sub: #9191a0;
+  --px-text-dim: #5f5f6e;
+
+  /* brand + semantics */
+  --px-accent: #c6ff3d;          /* lime 198,255,61 */
+  --px-accent-deep: #9be00f;
+  --px-cyan: #4fe3ff;
+  --px-violet: #7b5cff;
+  --px-success: #4fe378;
+  --px-warning: #ffc43d;
+  --px-danger: #ff5050;
+
+  /* glass (web recipe) */
+  --px-glass-bg: rgba(22, 22, 30, 0.72);
+  --px-glass-line: rgba(42, 42, 58, 0.9);
+  --px-glass-blur: saturate(1.2) blur(14px);
+
+  /* geometry scale */
+  --px-r-sm: 6px;
+  --px-r-md: 10px;
+  --px-r-lg: 14px;
+  --px-r-xl: 20px;
+  --px-sp-1: 4px;
+  --px-sp-2: 8px;
+  --px-sp-3: 12px;
+  --px-sp-4: 16px;
+  --px-sp-6: 24px;
+  --px-sp-8: 32px;
+
+  /* type scale (px at 1.0x; the native UI multiplies by DPI exactly like this) */
+  --px-f-logo: 20px;
+  --px-f-h1: 26px;
+  --px-f-h2: 15px;
+  --px-f-body: 13px;
+  --px-f-small: 11px;
+  --px-f-mono: 13px;
+  --px-f-big: 42px;
+
+  --px-font-ui: "Space Grotesk", "Segoe UI", Inter, system-ui, sans-serif;
+  --px-font-mono: "JetBrains Mono", "Consolas", ui-monospace, monospace;
+}
+
+/* Chip semantics shared with the native status pills */
+.px-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+  border-radius: 999px; border: 1px solid var(--px-glass-line);
+  background: var(--px-glass-bg); color: var(--px-text-sub);
+  font: 600 11px/1.6 var(--px-font-mono); letter-spacing: .04em; }
+.px-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor; }
+.px-chip[data-tone="ok"]   { color: var(--px-success); }
+.px-chip[data-tone="warn"] { color: var(--px-warning); }
+.px-chip[data-tone="bad"]  { color: var(--px-danger); }
+.px-chip[data-tone="info"] { color: var(--px-cyan); }
+@supports (backdrop-filter: blur(1px)) {
+  .px-chip { backdrop-filter: var(--px-glass-blur); }
+}

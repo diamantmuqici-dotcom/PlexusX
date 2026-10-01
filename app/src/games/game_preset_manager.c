@@ -1,24 +1,43 @@
-/* PlexusX — Per-Game Profiles, Scenes Library, and Foreground Detection
- * Cheating-Free: Zero game memory access, zero DLL injection.
+/* PlexusX — GamePresetManager: per-game profiles, the scene library, and the
+ * profile-activation semantics that keep transformations from ever stacking.
+ * Cheating-Free: zero game memory access, zero DLL injection; the "detection"
+ * here consumes facts collected by games/game_detector.c (read-only process
+ * metadata + window geometry) and decides through the pure state machine in
+ * games/game_state.h.
+ *
+ * Activation model (verified by host tests):
+ *   game launch  → snapshot the user's GLOBAL look → load the profile's sub
+ *                  look as the COMPLETE requested ColorState (replace, never
+ *                  add on top)
+ *   ALT+TAB back → the game gets the same requested state re-asserted
+ *   game exit    → the GLOBAL snapshot is restored verbatim
+ * so Global → Rust → CS2 → Valorant → Global provably ends on the first look.
  */
 #include "common.h"
-#include <tlhelp32.h>
+#include "game_detector.h"
+#include "game_state.h"
+#include "game_display_state.h"
+#include "../settings/settings_store.h"
+#include "../color/color_engine.h"
 
 #define MAX_PROFILES 32
 
-static Profile g_profiles[MAX_PROFILES];
-static int     g_nprofiles = 0;
-static int     g_active_profile = 0;
-static int     g_detect = 1;
-static int     g_auto_restore = 1;
-static int     g_delay_ms = 0;
-static wchar_t g_last_exe[96] = { 0 };
-static wchar_t g_current_fg[96] = { 0 };
+static Profile          g_profiles[MAX_PROFILES];
+static int              g_nprofiles = 0;
+static int              g_active_profile = 0;
+static int              g_detect = 1;
+static int              g_auto_restore = 1;
+static int              g_delay_ms = 0;
 
-static Look    g_saved_pre_game_look;
-static int     g_has_pre_game_look = 0;
-static int     g_pending_idx = -1;
-static DWORD   g_pending_due = 0;
+static wchar_t            g_current_fg[96] = { 0 };   /* last foreground base name (UI display) */
+static PxGameSM           g_gsm;              /* pure launch/exit/ALT+TAB machine */
+static PxGameDisplayState g_gds;              /* current game output truth          */
+
+/* delayed auto-apply (fire-and-forget, no sleeping on the UI thread) */
+static int              g_pending_idx = -1;
+static DWORD            g_pending_due = 0;
+static int              g_pending_snapshot = 0;
+static Look             g_pending_snapshot_look;
 
 /* ---------------- Preset Scenes / Looks ---------------- */
 static const SceneDef g_scenes[] = {
@@ -478,38 +497,7 @@ static void init_default_profiles(void)
     }
 }
 
-/* ---------------- Persistence INI ---------------- */
-static const wchar_t *cfg_file(void)
-{
-    static wchar_t p[MAX_PATH];
-    if (!p[0]) wsprintfW(p, L"%s\\profiles.ini", g_appdata);
-    return p;
-}
-
-int Prof_Init(void)
-{
-    init_default_profiles();
-    const wchar_t *f = cfg_file();
-    int saved_count = GetPrivateProfileIntW(L"general", L"count", -1, f);
-    if (saved_count > 0) {
-        g_detect = GetPrivateProfileIntW(L"general", L"detect", 1, f);
-        g_auto_restore = GetPrivateProfileIntW(L"general", L"auto_restore", 1, f);
-        g_delay_ms = GetPrivateProfileIntW(L"general", L"delay_ms", 0, f);
-    }
-    return g_nprofiles;
-}
-
-int Prof_Save(void)
-{
-    const wchar_t *f = cfg_file();
-    wchar_t b[32];
-    wsprintfW(b, L"%d", g_nprofiles);   WritePrivateProfileStringW(L"general", L"count", b, f);
-    wsprintfW(b, L"%d", g_detect);      WritePrivateProfileStringW(L"general", L"detect", b, f);
-    wsprintfW(b, L"%d", g_auto_restore);WritePrivateProfileStringW(L"general", L"auto_restore", b, f);
-    wsprintfW(b, L"%d", g_delay_ms);    WritePrivateProfileStringW(L"general", L"delay_ms", b, f);
-    return 0;
-}
-
+/* ---------------- Generic profile table access ---------------- */
 int Prof_Count(void) { return g_nprofiles; }
 Profile *Prof_Get(int i) { return (i >= 0 && i < g_nprofiles) ? &g_profiles[i] : NULL; }
 int Prof_ActiveIndex(void) { return g_active_profile; }
@@ -522,10 +510,14 @@ int Prof_SelectSubMode(int game_idx, int sub_idx)
     if (sub_idx < 0 || sub_idx >= p->sub_count) return -1;
     p->active_sub = sub_idx;
     Ui_LoadLook(&p->sub[sub_idx].look);
+    Eng_SetMode(PX_CSMODE_GAME, game_idx, sub_idx);
+    if (g_gds.detected && g_gds.profile_idx == game_idx) g_gds.sub_idx = sub_idx;
+    Prof_Save();
     Main_ApplyAll();
     return 0;
 }
 
+/* exe matching is case-insensitive against the normalized (lowercase) names */
 int Prof_FindExe(const wchar_t *exe)
 {
     if (!exe || !exe[0]) return -1;
@@ -548,6 +540,7 @@ int Prof_AddCustom(const wchar_t *name, const wchar_t *exe, const wchar_t *tag, 
     p->sub_count = 1;
     lstrcpyW(p->sub[0].name, L"Custom");
     p->sub[0].look = *lk;
+    cm_sanitize_look(&p->sub[0].look);
     p->auto_apply = 1;
     p->auto_restore = 1;
     g_nprofiles++;
@@ -580,21 +573,51 @@ const wchar_t *Prof_CurrentForeground(void)
     return g_current_fg;
 }
 
-void Prof_SetDetect(int on)      { g_detect = on ? 1 : 0; }
+void Prof_SetDetect(int on)      { g_detect = on ? 1 : 0; Prof_Save(); }
 int  Prof_Detect(void)           { return g_detect; }
-void Prof_SetAutoRestore(int on) { g_auto_restore = on ? 1 : 0; }
+void Prof_SetAutoRestore(int on) { g_auto_restore = on ? 1 : 0; Prof_Save(); }
 int  Prof_GetAutoRestore(void)   { return g_auto_restore; }
-void Prof_SetDelayMs(int ms)     { g_delay_ms = clampi(ms, 0, 3000); }
+void Prof_SetDelayMs(int ms)     { g_delay_ms = clampi(ms, 0, 3000); Prof_Save(); }
 int  Prof_GetDelayMs(void)       { return g_delay_ms; }
 
+/* ---------------- Runtime game state accessors ---------------- */
+const PxGameDisplayState *Prof_GameState(void) { return &g_gds; }
+
+/* Called by the WindowManager right after Main_ApplyAll(): the "applied" half
+ * of the game status is READ from the engine, never assumed. */
+void Prof_SyncApplied(const wchar_t *why)
+{
+    (void)why;
+    g_gds.applied = Eng_RequestedMatchesApplied();
+    PxGDS_UpdateOutput(&g_gds, Eng_GetRequested()->enabled, Eng_Available());
+}
+
+/* ---------------- wchar <-> UTF-8 (settings store bridge) ---------------- */
+static void w2u(const wchar_t *w, char *u, int cap)
+{
+    u[0] = 0;
+    if (w && w[0]) WideCharToMultiByte(CP_UTF8, 0, w, -1, u, cap, NULL, NULL);
+}
+static void u2w(const char *u, wchar_t *w, int cap)
+{
+    w[0] = 0;
+    if (u && u[0]) MultiByteToWideChar(CP_UTF8, 0, u, -1, w, cap);
+}
+
+/* ---------------- Preset activation (the no-stacking guarantee) ------------- */
+
 /* Load a complete look snapshot (never stacked on the previous one).
- * Hardware apply is left to the caller so ALT+TAB / focus events own the pipeline. */
+ * Hardware apply is left to the caller so the WindowManager owns the pipeline
+ * timing and the engine owns the ColorState. */
 static void load_game_idx(int idx)
 {
     if (idx < 0 || idx >= g_nprofiles) return;
     Profile *p = &g_profiles[idx];
     g_active_profile = idx;
     Ui_LoadLook(&p->sub[p->active_sub].look);
+    Eng_SetMode(PX_CSMODE_GAME, idx, p->active_sub);
+    g_gds.profile_idx = idx;
+    g_gds.sub_idx = p->active_sub;
     wchar_t msg[128];
     wsprintfW(msg, L"%s: %s profile applied", p->name, p->sub[p->active_sub].name);
     Ui_Notify(msg);
@@ -608,71 +631,186 @@ void Prof_TickPending(void)
     if ((LONG)(GetTickCount() - g_pending_due) < 0) return;
     int idx = g_pending_idx;
     g_pending_idx = -1;
+    if (g_pending_snapshot) {
+        g_gsm.snapshot = g_pending_snapshot_look;
+        g_gsm.have_snapshot = 1;
+    }
     load_game_idx(idx);
     Eng_Invalidate(L"game-profile-delayed");
     Main_ApplyAll();
+    Prof_SyncApplied(L"game-profile");
 }
 
-/* ---------------- Foreground matching (event-driven; also safe to call from a slow fallback) ---------------- */
-int Prof_Poll(void)
+/* ---------------- Foreground transition entry (from the WindowManager) ------- */
+void Prof_NotifyForeground(const PxDetectedForeground *f)
 {
-    if (!g_detect) return 0;
-    HWND fg = GetForegroundWindow();
-    if (!fg) return 0;
+    if (!f) return;
 
-    DWORD pid = 0;
-    GetWindowThreadProcessId(fg, &pid);
-    if (!pid || pid == GetCurrentProcessId()) return 0;
+    /* always refresh window identity + presentation facts */
+    g_gds.window_key = f->window_key;
+    g_gds.pid = f->pid;
+    g_gds.presentation = f->presentation;
 
-    HANDLE hp = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!hp) return 0;
-
-    wchar_t path[MAX_PATH * 2];
-    DWORD len = MAX_PATH * 2;
-    BOOL ok = QueryFullProcessImageNameW(hp, 0, path, &len);
-    CloseHandle(hp);
-    if (!ok) return 0;
-
-    const wchar_t *base = path;
-    for (const wchar_t *p = path; *p; p++) {
-        if (*p == L'\\') base = p + 1;
+    if (!f->resolved) {
+        /* OS refused the process query: keep detected/exe state untouched,
+         * just refresh what we can — never end a game session on a failure. */
+        PxGDS_UpdateOutput(&g_gds, Eng_GetRequested()->enabled, Eng_Available());
+        return;
     }
 
-    lstrcpynW(g_current_fg, base, 96);
-    if (_wcsicmp(base, g_last_exe) == 0) return 0;
+    g_gds.active = 1;
+    lstrcpynW(g_current_fg, f->exe, 96);
+    if (!g_detect) {
+        PxGDS_UpdateOutput(&g_gds, Eng_GetRequested()->enabled, Eng_Available());
+        return;
+    }
 
-    int old_idx = Prof_FindExe(g_last_exe);
-    int new_idx = Prof_FindExe(base);
+    /* match: lowercase-normalized exe against the profile table */
+    int fg_idx = Prof_FindExe(f->exe);
 
-    lstrcpynW(g_last_exe, base, 96);
+    PxGameDecision d = PxGameSM_OnForeground(&g_gsm, f->exe, fg_idx, g_auto_restore,
+                                             Eng_GetRequested());
+    if (d.ev == PXGAME_EV_NONE) return;   /* same process: state untouched; engine reasserts outside */
 
-    /* Game launched / focused */
-    if (new_idx >= 0) {
-        if (!g_has_pre_game_look) {
-            g_saved_pre_game_look = *Ui_Look();
-            g_has_pre_game_look = 1;
-        }
-
-        Profile *p = &g_profiles[new_idx];
+    if (d.apply_idx >= 0 && fg_idx >= 0) {
+        Profile *p = &g_profiles[fg_idx];
         if (p->auto_apply) {
             if (g_delay_ms > 0) {
-                g_pending_idx = new_idx;
+                g_pending_idx = fg_idx;
                 g_pending_due = GetTickCount() + (DWORD)g_delay_ms;
-                return 0;
+                g_pending_snapshot = d.snapshot;
+                g_pending_snapshot_look = g_gsm.snapshot;
+            } else {
+                load_game_idx(fg_idx);
             }
-            load_game_idx(new_idx);
-            return 1;
         }
-    } else if (old_idx >= 0 && g_auto_restore && g_has_pre_game_look) {
+        g_gds.detected = 1;
+        lstrcpynW(g_gds.exe, f->exe, PXGAME_EXE_LEN);
+        g_gds.profile_idx = fg_idx;
+        g_gds.sub_idx = g_profiles[fg_idx].active_sub;
+        g_gds.last_change_ms = GetTickCount();
+        Eng_Log("game", "%ls focused: profile %d, %s", g_gds.exe, fg_idx, px_pres_name(f->presentation));
+    } else if (d.restore) {
         g_pending_idx = -1;
-        /* Game exited: restore the pre-game snapshot (not a stacked transform). */
-        Ui_LoadLook(&g_saved_pre_game_look);
-        g_has_pre_game_look = 0;
+        Ui_LoadLook(&g_gsm.snapshot);              /* absolute restore, not a delta */
+        Eng_SetMode(PX_CSMODE_GLOBAL, -1, 0);
+        Eng_Log("game", "desktop restored (global look reloaded)");
+        g_gds.detected = 0;
+        g_gds.active = 0;
+        g_gds.exe[0] = 0;
+        g_gds.game_output = px_gameout_compute(0, PX_PRES_NONE, 1, 1);
         Ui_Notify(L"Desktop display profile restored");
         Ui_RebuildPanel();
         if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
-        return 1;
+    } else if (fg_idx < 0) {
+        /* foreground left the game area without a restore (auto-restore off) */
+        g_gds.detected = 0;
+        g_gds.active = 0;
+        g_gds.exe[0] = 0;
+        g_gds.last_change_ms = GetTickCount();
     }
+    PxGDS_UpdateOutput(&g_gds, Eng_GetRequested()->enabled, Eng_Available());
+}
+
+/* Slow safety-net poll (missed WinEvents). Event-driven path above is primary.
+ * Returns 1 when the active look changed so main.c re-asserts the pipeline. */
+int Prof_Poll(void)
+{
+    PxDetectedForeground f;
+    int before = g_gsm.active_idx;
+    PxDetect_Scan(&f);
+    if (!f.resolved) return 0;
+    Prof_NotifyForeground(&f);
+    return g_gsm.active_idx != before;
+}
+
+/* ---------------- General settings + persistence ---------------- */
+int Prof_Init(void)
+{
+    init_default_profiles();
+    PxGameSM_Init(&g_gsm);
+    PxGDS_Init(&g_gds);
+
+    const PxIni *pi = PxSet_ProfRO();
+    g_detect       = px_ini_get_int(pi, "general", "detect", 1);
+    g_auto_restore = px_ini_get_int(pi, "general", "auto_restore", 1);
+    g_delay_ms     = clampi(px_ini_get_int(pi, "general", "delay_ms", 0), 0, 3000);
+
+    /* apply persisted mutable fields to built-ins, append custom games */
+    for (int i = 0; i < PX_PROFS_MAX; i++) {
+        PxProfRec r;
+        if (!px_prof_get(pi, i, &r)) continue;
+        if (i < g_nprofiles && !r.is_custom) {
+            Profile *p = &g_profiles[i];
+            p->favorite      = r.favorite;
+            p->auto_apply    = r.auto_apply;
+            p->auto_restore  = r.auto_restore;
+            p->delay_ms      = r.delay_ms;
+            p->hdr_preference = r.hdr_preference;
+            p->target_res_w  = r.target_res_w;
+            p->target_res_h  = r.target_res_h;
+            p->target_hz     = r.target_hz;
+            if (r.active_sub >= 0 && r.active_sub < p->sub_count) p->active_sub = r.active_sub;
+        } else if (r.is_custom && g_nprofiles < MAX_PROFILES) {
+            Profile *p = &g_profiles[g_nprofiles++];
+            memset(p, 0, sizeof *p);
+            u2w(r.name, p->name, 48);
+            u2w(r.exe,  p->exe,  96);
+            u2w(r.tag,  p->tag,  32);
+            p->is_custom = 1;
+            p->favorite = r.favorite;
+            p->auto_apply = r.auto_apply;
+            p->auto_restore = r.auto_restore;
+            p->delay_ms = r.delay_ms;
+            p->hdr_preference = r.hdr_preference;
+            p->target_res_w = r.target_res_w;
+            p->target_res_h = r.target_res_h;
+            p->target_hz = r.target_hz;
+            p->sub_count = r.sub_count < 1 ? 1 : (r.sub_count > MAX_SUB_MODES ? MAX_SUB_MODES : r.sub_count);
+            for (int s = 0; s < p->sub_count; s++) {
+                u2w(r.sub[s].name, p->sub[s].name, 32);
+                p->sub[s].look = r.sub[s].look;    /* already sanitized by the store */
+            }
+            p->active_sub = (r.active_sub >= 0 && r.active_sub < p->sub_count) ? r.active_sub : 0;
+        }
+    }
+    return g_nprofiles;
+}
+
+int Prof_Save(void)
+{
+    PxIni *pi = PxSet_Prof();
+    px_ini_set_int(pi, "general", "detect", g_detect);
+    px_ini_set_int(pi, "general", "auto_restore", g_auto_restore);
+    px_ini_set_int(pi, "general", "delay_ms", g_delay_ms);
+    px_ini_set_int(pi, "meta", "schema", PX_CFG_SCHEMA);
+
+    /* every slot: built-ins persist their mutable fields, customs their data */
+    for (int i = 0; i < g_nprofiles && i < PX_PROFS_MAX; i++) {
+        Profile *p = &g_profiles[i];
+        PxProfRec r;
+        memset(&r, 0, sizeof r);
+        w2u(p->name, r.name, sizeof r.name);
+        w2u(p->exe,  r.exe,  sizeof r.exe);
+        w2u(p->tag,  r.tag,  sizeof r.tag);
+        r.is_custom = p->is_custom;
+        r.favorite = p->favorite;
+        r.auto_apply = p->auto_apply;
+        r.auto_restore = p->auto_restore;
+        r.delay_ms = p->delay_ms;
+        r.hdr_preference = p->hdr_preference;
+        r.target_res_w = p->target_res_w;
+        r.target_res_h = p->target_res_h;
+        r.target_hz = p->target_hz;
+        r.sub_count = p->sub_count;
+        r.active_sub = p->active_sub;
+        for (int s = 0; s < p->sub_count && s < PX_SUBS_MAX; s++) {
+            w2u(p->sub[s].name, r.sub[s].name, sizeof r.sub[s].name);
+            r.sub[s].look = p->sub[s].look;
+        }
+        px_prof_put(pi, i, &r);
+    }
+    PxSet_Flush();
     return 0;
 }
 
