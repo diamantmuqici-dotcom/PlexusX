@@ -43,9 +43,14 @@
 #include <wchar.h>
 #include <math.h>
 
-#define PX_APP_NAME       L"PlexusX"
-#define PX_APP_TITLE      L"PlexusX — Gaming Display Optimizer"
-#define PX_VERSION        L"2.2.0"
+/* Centralized version — single source of truth (core/version.h) */
+#include "core/version.h"
+
+#define PX_APP_NAME       PX_PRODUCT_NAME_W
+#define PX_APP_TITLE      PX_PRODUCT_TITLE_W
+#ifndef PX_VERSION
+#define PX_VERSION        PX_VERSION_W
+#endif
 #define PX_BUILD_DATE     L"2026-10-01"
 #define PX_CLASS          L"PlexusXMainWnd"
 #define PX_XH_CLASS       L"PlexusXCrosshairWnd"
