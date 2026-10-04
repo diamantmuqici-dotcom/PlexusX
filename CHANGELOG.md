@@ -1,6 +1,6 @@
 # PlexusX Changelog
 
-## 2.2.1 — Hardware health reassertion
+## Unreleased — Hardware health reassertion
 
 - Added a lightweight display-pipeline health check to detect when Windows or a display driver silently drops the active Magnification color effect or a PlexusX-owned gamma LUT.
 - Reapplies the requested color state only after a real hardware-state mismatch is detected; normal slider changes remain event-driven and do not become a polling rewrite loop.
