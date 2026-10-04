@@ -356,8 +356,21 @@ int PxPipe_HealthCheck(void)
         if (memcmp(dd->curr, dd->orig, sizeof dd->curr) == 0) continue;
 
         WORD actual[3][256];
-        if (!GetDeviceGammaRamp(dd->dc, actual) ||
-            memcmp(actual, dd->curr, sizeof actual) != 0) {
+        int mismatch = 0;
+        if (!GetDeviceGammaRamp(dd->dc, actual)) {
+            mismatch = 1;
+        } else {
+            /* Drivers may quantize a LUT by a few LSBs on readback. Treat small
+             * quantization as equivalent, but detect a real reset to a different
+             * curve. */
+            for (int ch = 0; ch < 3 && !mismatch; ch++) {
+                for (int i = 0; i < 256; i++) {
+                    int delta = (int)actual[ch][i] - (int)dd->curr[ch][i];
+                    if (delta < -8 || delta > 8) { mismatch = 1; break; }
+                }
+            }
+        }
+        if (mismatch) {
             /* Force the next apply to write the calculated ramp again. */
             dd->have_curr = 0;
             lost = 1;
