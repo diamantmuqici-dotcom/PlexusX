@@ -322,6 +322,64 @@ void PxPipe_Resync(void)
     for (int d = 0; d < g_ndisp; d++) g_disp[d].have_curr = 0;
 }
 
+/* ---------------- Hardware health check ----------------------------- */
+
+/*
+ * Windows/driver state can change without delivering a reliable Win32 event:
+ * a fullscreen transition, display-mode change, GPU reset, HDR transition or
+ * driver policy change can silently discard the Magnification effect or a
+ * gamma LUT.  Event-driven reassertion remains the primary path; this function
+ * is only a cheap safety net called from the existing UI timer.
+ *
+ * We deliberately do NOT read back neutral/original ramps and "correct" them:
+ * another calibration utility is allowed to own the untouched LUT.  A ramp is
+ * verified only while PlexusX is actually using a non-original LUT.
+ */
+int PxPipe_HealthCheck(void)
+{
+    int lost = 0;
+
+    if (g_mag_ok && g_mag_readback && g_fx_known && p_MagGetFx) {
+        MagColorEffect rb;
+        cm_identity(&rb);
+        if (!p_MagGetFx(&rb) || memcmp(&rb, &g_fx_curr, sizeof rb) != 0) {
+            g_fx_known = 0;
+            lost = 1;
+        }
+    }
+
+    for (int d = 0; d < g_ndisp; d++) {
+        DispDC *dd = &g_disp[d];
+        if (!dd->dc || !dd->have_orig || !dd->have_curr) continue;
+
+        /* Only inspect a LUT while PlexusX owns a non-original curve. */
+        if (memcmp(dd->curr, dd->orig, sizeof dd->curr) == 0) continue;
+
+        WORD actual[3][256];
+        int mismatch = 0;
+        if (!GetDeviceGammaRamp(dd->dc, actual)) {
+            mismatch = 1;
+        } else {
+            /* Drivers may quantize a LUT by a few LSBs on readback. Treat small
+             * quantization as equivalent, but detect a real reset to a different
+             * curve. */
+            for (int ch = 0; ch < 3 && !mismatch; ch++) {
+                for (int i = 0; i < 256; i++) {
+                    int delta = (int)actual[ch][i] - (int)dd->curr[ch][i];
+                    if (delta < -8 || delta > 8) { mismatch = 1; break; }
+                }
+            }
+        }
+        if (mismatch) {
+            /* Force the next apply to write the calculated ramp again. */
+            dd->have_curr = 0;
+            lost = 1;
+        }
+    }
+
+    return lost;
+}
+
 /* ---------------- Apply ---------------- */
 
 /* Linear half of the look -> DWM.  The effect is sanitised (NaN/Inf -> identity,

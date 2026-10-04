@@ -134,4 +134,10 @@ void Wm_OnSettleTimer(void)
 void Wm_Tick(void)
 {
     Prof_TickPending();
+
+    /* Hardware state can disappear without a matching Win32 event.  Let the
+     * pipeline verify its own live state and only reapply when something was
+     * actually lost; this is not a periodic colour rewrite loop. */
+    if (PxPipe_HealthCheck())
+        Wm_ReassertNow(L"hardware-health");
 }
