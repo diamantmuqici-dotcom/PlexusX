@@ -18,7 +18,7 @@
 /* ---- Semantic version ---- */
 #define PX_VERSION_MAJOR  2
 #define PX_VERSION_MINOR  2
-#define PX_VERSION_PATCH  1
+#define PX_VERSION_PATCH  0
 
 /* Stringified version for C string literal concatenation */
 #define PX_VER_STR2(x) #x
@@ -28,7 +28,7 @@
     PX_VER_STR(PX_VERSION_MINOR) "." \
     PX_VER_STR(PX_VERSION_PATCH)
 
-#define PX_VERSION_WSTRING L"2.2.1"
+#define PX_VERSION_WSTRING L"2.2.0"
 
 /* Wide version for Win32 resources — keep in sync with PX_VERSION_STRING */
 #define PX_VERSION_W PX_VERSION_WSTRING
