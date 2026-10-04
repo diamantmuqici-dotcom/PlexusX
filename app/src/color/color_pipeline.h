@@ -43,6 +43,7 @@ void PxPipe_Shutdown(void);
 void PxPipe_Run(const PxTransformPlan *plan, PxPipelineResult *out);
 void PxPipe_ForceReset(void);           /* emergency: identity + originals   */
 void PxPipe_Resync(void);               /* forget hardware cache; force next */
+int  PxPipe_HealthCheck(void);          /* 1 = hardware state was lost and needs re-apply */
 
 /* state / targeting ---------------------------------------------------------- */
 int  PxPipe_MagAvailable(void);
