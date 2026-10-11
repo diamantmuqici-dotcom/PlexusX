@@ -9,16 +9,19 @@
   if (!E) { document.getElementById("chipMode").textContent = "ENGINE SCRIPT MISSING"; return; }
 
   const cv = document.getElementById("cv");
-  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  const ctx = cv.getContext ? cv.getContext("2d", { willReadFrequently: true }) : null;
+  if (!ctx) { document.getElementById("chipMode").textContent = "CANVAS UNAVAILABLE IN THIS BROWSER"; return; }
   const W = cv.width, H = cv.height;
 
+  /* Slider ranges mirror the NATIVE UI (panel_color.c): the temperature slider
+   * spans the 3000–10000 K the app exposes, not the engine's full clamp range. */
   const SPECS = [
     ["sat",         "Saturation",   0, 300, 0.5,  "%"],
     ["vibrance",    "Vibrance",     0, 300, 0.5,  "%"],
     ["bri",         "Brightness",   0, 200, 0.5,  "%"],
     ["con",         "Contrast",     0, 200, 0.5,  "%"],
     ["gamma",       "Gamma",     0.4, 2.5, 0.01,  ""],
-    ["temp",        "Temp",      1000, 40000, 50, "K"],
+    ["temp",        "Temp",      3000, 10000, 50, "K"],
     ["tint",        "Tint",      -100, 100, 1,    ""],
     ["r_gain",      "R Gain",       0, 200, 0.5,  "%"],
     ["g_gain",      "G Gain",       0, 200, 0.5,  "%"],
@@ -30,17 +33,13 @@
     ["clarity",     "Clarity",      0, 200, 0.5,  "%"],
     ["hue",         "Hue",       -180, 180, 1,    "°"],
   ];
-  const PRESETS = {
-    "Competitive": { sat: 235, vibrance: 120, con: 118, bri: 102, gamma: 1.0 },
-    "Night Ops":   { sat: 265, vibrance: 150, bri: 128, gamma: 0.85, shadows: 132 },
-    "Cinema":      { sat: 118, vibrance: 108, con: 106, gamma: 1.12, temp: 5200 },
-    "Natural":     { sat: 100, vibrance: 100, bri: 100, con: 100, gamma: 1.0, temp: 6500 },
-    "Max Chroma":  { sat: 300, vibrance: 300, con: 108 },
-  };
+  /* The preset buttons load the REAL built-in library (assets/presets.js —
+   * CI-parity-checked against the native seed in preset_store.h), so what you
+   * see here is what the app's "Load" button applies. */
+  const SITE_PRESETS = (window.PxSitePresets && window.PxSitePresets.presets) || [];
 
-  let look = E.neutral();
-  Object.assign(look, { sat: 150, vibrance: 120 });   /* the app's default boost */
-  let base = null;                                     /* ImageData of the source scene */
+  let look = E.neutral();      /* the app's actual first-run default: neutral */
+  let base = null;             /* ImageData of the source scene */
   let splitPct = 50;
 
   /* ---------- procedural game-ish scene (no network needed) ---------- */
@@ -167,17 +166,23 @@
   }
 
   const presetsEl = document.getElementById("presets");
-  for (const name in PRESETS) {
+  for (const p of SITE_PRESETS) {
     const b = document.createElement("button");
-    b.type = "button"; b.className = "btn btn-sm btn-ghost"; b.textContent = name;
+    b.type = "button"; b.className = "btn btn-sm btn-ghost"; b.textContent = p.name;
+    b.title = p.desc || p.name;
     b.addEventListener("click", () => {
-      look = Object.assign(E.neutral(), PRESETS[name], { enabled: 1 });
+      look = Object.assign(E.neutral(), p.look, { enabled: 1 });
       syncInputs(); schedule();
     });
     presetsEl.appendChild(b);
   }
+  if (!SITE_PRESETS.length) {
+    const s = document.createElement("span");
+    s.className = "pv-note"; s.textContent = "presets.js missing — preset buttons unavailable";
+    presetsEl.appendChild(s);
+  }
   document.getElementById("resetBtn").addEventListener("click", () => {
-    look = E.neutral(); Object.assign(look, { sat: 150, vibrance: 120 });
+    look = E.neutral();          /* same neutral baseline the app resets to */
     syncInputs(); schedule();
   });
   const sceneSelect = document.getElementById("sceneSelect");

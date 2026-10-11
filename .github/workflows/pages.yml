@@ -33,13 +33,35 @@ jobs:
           gcc -std=gnu11 -Wall -Wextra -Werror -O2 -Iapp/src tests/parity_gen.c -o /tmp/parity_gen -lm
           /tmp/parity_gen > site/parity.json
           node scripts/site_parity.js
+          gcc -std=gnu11 -Wall -Wextra -Werror -O2 -Iapp/src tests/preset_gen.c app/src/games/game_profile.c -o /tmp/preset_gen -lm
+          /tmp/preset_gen > /tmp/preset_seed.json
+          node scripts/preset_parity.js --golden /tmp/preset_seed.json
+
+      - name: Website DOM smoke test
+        run: |
+          npm install --no-save jsdom
+          node scripts/site_smoke.js
 
       - name: Build Windows binaries (for download links)
         run: |
           pip install ziglang
           cd app && make clean && make
           cd ../site/download && sha256sum PlexusX.exe PlexusX-Setup.exe > SHA256SUMS.txt
-          
+
+      # The deployed page must show the checksums of the binaries THIS deployment
+      # serves — the values committed in index.html describe the repo artifacts
+      # and would drift from every CI rebuild. Inject the fresh hashes into the
+      # marked elements (#shaPortable / #shaSetup) right before upload.
+      - name: Inject deployed SHA-256 checksums into the download card
+        run: |
+          SHA_PORTABLE=$(sha256sum site/download/PlexusX.exe | cut -d' ' -f1)
+          SHA_SETUP=$(sha256sum site/download/PlexusX-Setup.exe | cut -d' ' -f1)
+          sed -i -E "s|(id=\"shaPortable\"[^>]*>)[0-9a-fA-F]{0,64}(<)|\1${SHA_PORTABLE}\2|" site/index.html
+          sed -i -E "s|(id=\"shaSetup\"[^>]*>)[0-9a-fA-F]{0,64}(<)|\1${SHA_SETUP}\2|" site/index.html
+          grep -q "${SHA_PORTABLE}" site/index.html
+          grep -q "${SHA_SETUP}" site/index.html
+          echo "Injected portable=${SHA_PORTABLE} setup=${SHA_SETUP}"
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

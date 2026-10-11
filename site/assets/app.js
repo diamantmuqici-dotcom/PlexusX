@@ -147,7 +147,7 @@ heroSat.dispatchEvent(new Event("input"));
     $("#cmpSatVal").textContent = s + "%";
     $("#cmpConVal").textContent = sgn(c);
     $("#cmpTempVal").textContent = sgn(t);
-    $("#cmpTag").textContent = "CHROMAX · " + s + "%";
+    $("#cmpTag").textContent = "PLEXUSX · " + s + "%";
     if (cmpEng && cmpEng.ok()) cmpEng.render({ sat: s, con: 100 + c, temp: 6500 + t * 22 });
     else afterImg.style.filter = cssFilter({ sat: s, con: c });
     tint($("#cmpWarm"), $("#cmpCool"), t);
@@ -182,22 +182,29 @@ heroSat.dispatchEvent(new Event("input"));
   syncSize(); applyPreview();
 })();
 
-/* ---------- game gallery ---------- */
+/* ---------- game gallery ----------
+ * Values below mirror the app's real built-in sub-modes in
+ * app/src/games/game_preset_manager.c (each game's "Competitive" look, except
+ * Tarkov which ships "Dark Room" as its signature mode).  bri/con/temp are the
+ * site's relative display of the native percent values (bri 106 → +6,
+ * temp 6400K → −5 on the ±50 slider, which maps t → 6500 + t·22 K).
+ * If the native table changes, update these too. */
 const GAMES = [
-  { id: "rust",      name: "Rust",      sub: "survival · treelines",   img: "media/scene-rust.jpg",
-    sat: 250, bri: 6,  con: 14, temp: 4,   gamma: 100 },
-  { id: "cs2",       name: "CS2",       sub: "tactical · dust",        img: "media/scene-cs2.jpg",
-    sat: 235, bri: 0,  con: 18, temp: -4,  gamma: 100 },
-  { id: "valorant",  name: "Valorant",  sub: "hero shooter · clean",   img: "media/scene-valorant.jpg",
-    sat: 240, bri: 2,  con: 14, temp: 0,   gamma: 100 },
-  { id: "fortnite",  name: "Fortnite",  sub: "battle royale · pop",    img: "media/scene-fortnite.jpg",
-    sat: 200, bri: 0,  con: 8,  temp: 0,   gamma: 100 },
-  { id: "tarkov",    name: "Tarkov",    sub: "night raids · dark",     img: "media/scene-tarkov.jpg",
-    sat: 265, bri: 28, con: 12, temp: -6,  gamma: 85 },
-  { id: "warzone",   name: "Warzone",   sub: "snow maps · glare",      img: "media/scene-warzone.jpg",
-    sat: 245, bri: -4, con: 16, temp: -10, gamma: 95 },
+  { id: "rust",      name: "Rust",      mode: "Competitive", sub: "survival · treelines",   img: "media/scene-rust.jpg",
+    sat: 180, vibrance: 150, bri: 6,  con: 16, temp: -5, gamma: 94, shadows: 135, highlights: 95, clarity: 120 },
+  { id: "cs2",       name: "CS2",       mode: "Competitive", sub: "tactical · dust",        img: "media/scene-cs2.jpg",
+    sat: 180, vibrance: 150, bri: 5,  con: 18, temp: 0,  gamma: 96, shadows: 125, highlights: 95, clarity: 118 },
+  { id: "valorant",  name: "Valorant",  mode: "Competitive", sub: "hero shooter · clean",   img: "media/scene-valorant.jpg",
+    sat: 180, vibrance: 150, bri: 4,  con: 16, temp: 5,  gamma: 95, shadows: 120, highlights: 95, clarity: 116 },
+  { id: "fortnite",  name: "Fortnite",  mode: "Competitive", sub: "battle royale · pop",    img: "media/scene-fortnite.jpg",
+    sat: 180, vibrance: 150, bri: 4,  con: 10, temp: 0,  gamma: 96, shadows: 118, highlights: 95, clarity: 112 },
+  { id: "tarkov",    name: "Tarkov",    mode: "Dark Room",   sub: "night raids · dark",     img: "media/scene-tarkov.jpg",
+    sat: 180, vibrance: 150, bri: 26, con: 14, temp: -9, gamma: 76, shadows: 165, highlights: 85, clarity: 125 },
+  { id: "warzone",   name: "Warzone",   mode: "Competitive", sub: "snow maps · glare",      img: "media/scene-warzone.jpg",
+    sat: 180, vibrance: 150, bri: 8,  con: 18, temp: 0,  gamma: 92, shadows: 135, highlights: 92, clarity: 122 },
 ];
 const STATS = [
+  ["MODE",       g => g.mode],
   ["SATURATION", g => g.sat + "%"],
   ["BRIGHTNESS", g => sgn(g.bri)],
   ["CONTRAST",   g => sgn(g.con)],
@@ -210,10 +217,6 @@ const stageImg = $("#stageImg");
 let current = GAMES[0];
 const stRange = { sat: $("#stSat"), bri: $("#stBri"), con: $("#stCon"), temp: $("#stTemp"), gam: $("#stGam") };
 
-function code(g) {
-  const p = n => String(Math.abs(n)).padStart(2, "0");
-  return `CHX-${g.id.toUpperCase()}-${g.sat}-${g.bri < 0 ? "m" : ""}${p(g.bri)}-${p(g.con)}-${p(g.temp)}`;
-}
 const stageEng = attachEnginePreview(stageImg);
 function renderStage() {
   const g = current;
@@ -221,7 +224,7 @@ function renderStage() {
               temp: +stRange.temp.value, gamma: +stRange.gam.value / 100 };
   $("#stageName").textContent = g.name.toUpperCase();
   if (stageEng && stageEng.ok()) {
-    stageEng.render({ sat: s.sat, vibrance: 100, bri: 100 + s.bri, con: 100 + s.con,
+    stageEng.render({ sat: s.sat, vibrance: g.vibrance || 100, bri: 100 + s.bri, con: 100 + s.con,
                       gamma: s.gamma, temp: 6500 + s.temp * 22,
                       shadows: g.shadows || 100, highlights: g.highlights || 100,
                       clarity: g.clarity || 100, hue: g.hue || 0 });
@@ -234,7 +237,6 @@ function renderStage() {
   $("#stConVal").textContent = sgn(s.con);
   $("#stTempVal").textContent = sgn(s.temp);
   $("#stGamVal").textContent = s.gamma.toFixed(2);
-  $("#stCode").textContent = code({ ...g, sat: s.sat, bri: s.bri, con: s.con, temp: s.temp });
   Object.values(stRange).forEach(paintRange);
 }
 function selectGame(g, push = true) {
@@ -265,6 +267,8 @@ selectGame(GAMES[0], false);
 /* ---------- toast ---------- */
 const toastEl = document.createElement("div");
 toastEl.className = "toast";
+toastEl.setAttribute("role", "status");
+toastEl.setAttribute("aria-live", "polite");
 document.body.appendChild(toastEl);
 let toastTimer;
 function toast(msg) {
@@ -282,9 +286,15 @@ async function copy(text, label) {
   }
   toast(label + " copied ✓");
 }
-$("#stCopy").addEventListener("click", () => copy($("#stCode").textContent, "Preset code"));
-$("#copySha").addEventListener("click", () => copy($("#sha").textContent, "SHA-256"));
-$("#copyUrl")?.addEventListener("click", () => copy("http://192.168.1.24:8777", "Phone link"));
+/* Optional wiring: every lookup is null-checked so one missing element can
+ * never abort the whole script again (this exact failure mode once killed the
+ * reveal observer, mock tabs and recommender because #stCopy/#stCode/#sha had
+ * been removed from the markup while the listeners stayed). */
+function on(sel, ev, fn) { const el = $(sel); if (el) el.addEventListener(ev, fn); return !!el; }
+
+on("#copyShaPortable", "click", () => copy($("#shaPortable")?.textContent.trim() || "", "Portable SHA-256"));
+on("#copyShaSetup",    "click", () => copy($("#shaSetup")?.textContent.trim() || "", "Setup SHA-256"));
+on("#copyUrl", "click", () => copy("http://192.168.1.24:8777", "Phone link"));
 
 /* ---------- app mock ---------- */
 $("#mockSide").addEventListener("click", e => {
@@ -356,34 +366,37 @@ if (recBtn) {
     let desc = "";
     let caveat = "";
     let lk = { bri: 100, con: 100, sat: 100, gam: 1.0 };
-    
-    // Deterministic rules
+
+    /* Deterministic rules.  Every recommendation below is the actual value set
+     * of a shipped built-in preset (app/src/games/game_preset_manager.c scene
+     * library / preset store), so the numbers you see here are the numbers the
+     * app applies — not invented marketing values. */
     if (prio === "competitive") {
-      sub = "Competitive Visibility";
-      desc = "Maximizes player model contrast against the environment. Uses higher saturation to distinguish materials.";
-      lk = { bri: 106, con: 116, sat: 245, gam: 0.94 };
+      sub = "Competitive — matches the built-in “Competitive” preset";
+      desc = "180% saturation with a bounded vibrance boost, lifted shadows and slight clarity. Separates player models from the environment without oversaturating skin tones.";
+      lk = { bri: 106, con: 114, sat: 180, gam: 0.95 };
     } else if (prio === "natural") {
-      sub = "Natural";
-      desc = "Preserves original artistic intent while ensuring safe black levels. No heavy saturation.";
+      sub = "Natural — matches the built-in “Natural Neutral” preset";
+      desc = "Every control at its no-op value: the game renders exactly as the artist intended. Also the baseline every other preset resets to.";
       lk = { bri: 100, con: 100, sat: 100, gam: 1.0 };
     } else {
       // Balanced
       if (env === "dark") {
-        sub = "Low-Light / Night";
-        desc = "Elevates shadows without blowing out UI highlights. Modest contrast bump.";
-        lk = { bri: 125, con: 112, sat: 230, gam: 0.76 };
+        sub = "Low-Light / Night — matches the built-in “Night Ops” preset";
+        desc = "Elevates shadows (155%) and steepens gamma to 0.78 without blowing out UI highlights; slightly warm 6200K.";
+        lk = { bri: 122, con: 110, sat: 180, gam: 0.78 };
       } else if (env === "snow") {
-        sub = "Snow / Bright";
-        desc = "Restrains blinding highlights and adjusts temperature to reduce eye strain in bright environments.";
-        lk = { bri: 92, con: 118, sat: 185, gam: 1.05 };
+        sub = "Snow / Bright — matches the built-in “Snow Glare” preset";
+        desc = "Pulls brightness down to 92%, raises contrast and cools to 7200K with compressed highlights to reduce glare strain.";
+        lk = { bri: 92, con: 118, sat: 180, gam: 1.05 };
       } else if (env === "forest") {
-        sub = "Forest";
-        desc = "Pulls out green/brown separation and slightly lifts mid-tones to see into foliage.";
-        lk = { bri: 105, con: 115, sat: 260, gam: 0.96 };
+        sub = "Forest — matches the built-in “Treeline Forest” preset";
+        desc = "Green-biased gains and lifted shadow-mids to see into foliage, with a mild green/magenta tint correction.";
+        lk = { bri: 105, con: 114, sat: 180, gam: 0.96 };
       } else {
-        sub = "Daylight / Mixed";
-        desc = "A solid all-around profile. Safe for indoor and outdoor environments.";
-        lk = { bri: 104, con: 112, sat: 220, gam: 0.98 };
+        sub = "Daylight / Mixed — matches the app’s “Daylight” game sub-mode";
+        desc = "A solid all-around profile: gentle contrast and clarity lift, neutral 6500K white point. Safe for indoor and outdoor environments.";
+        lk = { bri: 104, con: 112, sat: 180, gam: 0.98 };
       }
     }
     

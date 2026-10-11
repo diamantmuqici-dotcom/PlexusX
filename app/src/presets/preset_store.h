@@ -387,9 +387,12 @@ static inline int PxPre_ToJson(const PxPresetLib *lib, char *buf, size_t cap)
         o = pxpre_put(buf, cap, o, ", \"hz\": ");          o = pxpre_num(buf, cap, o, p->disp_hz);
         o = pxpre_put(buf, cap, o, ", \"hdr\": ");         o = pxpre_num(buf, cap, o, p->disp_hdr);
         o = pxpre_put(buf, cap, o, ", \"monitor\": ");     o = pxpre_num(buf, cap, o, p->monitor_idx);
-        o = pxpre_put(buf, cap, o, "}},\n");
+        /* Comma goes BEFORE the next object (see the `i ? ",\n    {"` opener),
+         * never after the last one: the export must parse with any strict JSON
+         * reader, not only with the tolerant PxPre_FromJson. */
+        o = pxpre_put(buf, cap, o, "}}");
     }
-    o = pxpre_put(buf, cap, o, "  ]\n}\n");
+    o = pxpre_put(buf, cap, o, "\n  ]\n}\n");
     return o;
 }
 
@@ -470,14 +473,20 @@ static inline int PxPre_FromJson(PxPresetLib *lib, const char *text)
 
 /* ---------------- built-in seed ------------------------------------------- */
 /* Seeded once, when no presets file exists.  Users keep them (deletable like
- * any other preset) and their tweaks are what the file then stores. */
+ * any other preset) and their tweaks are what the file then stores.
+ *
+ * CONSISTENCY RULE (enforced by tests/test_all.c): a Global preset that shares
+ * its name with an entry of the scene library in games/game_preset_manager.c
+ * MUST carry the exact same Look — two libraries, one truth per name.  This
+ * includes "Vivid 300%": the explicit maximum-chroma showcase preset is
+ * deliberately identical in both tables. */
 static inline void PxPre_SeedBuiltins(PxPresetLib *lib)
 {
     static const struct { const char *name; Look look; } globals[] = {
         { "Neutral",        { 1, 100, 100, 100, 100, 1.00f, 6500, 0, 100, 100, 100, 100, 100, 100, 100, 100, 0 } },
-        { "Competitive",    { 1, 185, 160, 106, 114, 0.95f, 6500, 0, 100, 100, 100, 120,  95, 100, 100, 115, 0 } },
+        { "Competitive",    { 1, 180, 150, 106, 114, 0.95f, 6500, 0, 100, 100, 100, 120,  95, 100, 100, 115, 0 } },
         { "Vivid 300%",     { 1, 300, 240, 105, 112, 1.00f, 6500, 0, 100, 100, 100, 110, 100, 100, 100, 115, 0 } },
-        { "Night Ops",      { 1, 235, 190, 122, 110, 0.78f, 6200, 0, 102, 100,  98, 155,  85, 108, 100, 120, 0 } },
+        { "Night Ops",      { 1, 180, 150, 122, 110, 0.78f, 6200, 0, 102, 100,  98, 155,  85, 108, 100, 120, 0 } },
         { "Cinematic Warm", { 1, 135, 120, 102, 110, 1.04f, 5800, 4, 105, 100,  94,  95, 105, 100, 100, 105, 0 } },
         { "Cool Clarity",   { 1, 140, 130, 104, 108, 0.98f, 7500,-2,  96, 100, 108, 110,  95, 100, 100, 112, 0 } },
         { "High Contrast",  { 1, 165, 140, 105, 125, 0.95f, 6500, 0, 100, 100, 100, 115,  90, 100, 100, 125, 0 } },

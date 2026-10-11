@@ -1024,6 +1024,146 @@ static void test_shipped_presets(void)
     printf("  [PASS] All %d shipped scene/game presets yield a safe matrix and a monotonic ramp\n", n);
 }
 
+/* ---------------- 14b. Scene library <-> preset seed consistency -------------
+ * Two native tables expose built-in looks: the scene library in
+ * game_preset_manager.c and the unified preset seed in preset_store.h.
+ * A preset name that exists in BOTH must carry the SAME look — otherwise the
+ * UI applies different values depending on which page the user clicked from.
+ * Scenes are parsed WITH their names here (the value-only sweep above cannot
+ * see the name<->value pairing). */
+static int load_scenes_from_source(char names[][64], Look *looks, int max)
+{
+    char path[512];
+    const char *file = __FILE__;
+    const char *slash = strrchr(file, '/');
+    size_t dirlen = slash ? (size_t)(slash - file) + 1 : 0;
+    if (dirlen + 32 > sizeof path) return 0;
+    memcpy(path, file, dirlen);
+    strcpy(path + dirlen, "../app/src/games/game_preset_manager.c");
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    static char text[600000];
+    size_t n = fread(text, 1, sizeof text - 1, f);
+    fclose(f);
+    text[n] = 0;
+
+    /* isolate the g_scenes[] table so per-game sub-mode tables (which have no
+     * inline names on the look line) cannot confuse the parse */
+    char *tbl = strstr(text, "g_scenes[]");
+    if (!tbl) return 0;
+    char *tbl_end = strstr(tbl, "\n};");
+    if (!tbl_end) return 0;
+
+    int count = 0;
+    for (char *line = tbl; line < tbl_end && count < max; ) {
+        char *eol = strchr(line, '\n');
+        if (!eol || eol > tbl_end) eol = tbl_end;
+        char *nm = strstr(line, "L\"");
+        char *lk = strstr(line, "{ 1,");
+        if (nm && lk && nm < eol && lk < eol && nm < lk) {
+            nm += 2;
+            char *nend = strchr(nm, '"');
+            if (nend && nend < eol && nend - nm < 63) {
+                float v[17];
+                char *q = lk + 1;
+                int got = 0;
+                while (got < 17) {
+                    char *end;
+                    v[got] = strtof(q, &end);
+                    if (end == q) break;
+                    got++;
+                    q = end;
+                    if (*q == 'f') q++;
+                    while (*q == ' ' || *q == ',') q++;
+                }
+                if (got == 17) {
+                    memcpy(names[count], nm, (size_t)(nend - nm));
+                    names[count][nend - nm] = 0;
+                    looks[count].enabled = (int)v[0];
+                    memcpy(&looks[count].sat, &v[1], 16 * sizeof(float));
+                    count++;
+                }
+            }
+        }
+        line = eol < tbl_end ? eol + 1 : tbl_end;
+    }
+    return count;
+}
+
+static void test_scene_seed_consistency(void)
+{
+    static char names[64][64];
+    static Look looks[64];
+    PxPresetLib lib;
+    int n = load_scenes_from_source(names, looks, 64);
+    if (n == 0) {
+        printf("  [SKIP] scene<->seed consistency (game_preset_manager.c not found next to the tests)\n");
+        return;
+    }
+    CHECK(n >= 17);                                    /* the full scene library */
+
+    memset(&lib, 0, sizeof lib);
+    PxPre_SeedBuiltins(&lib);
+
+    int matched = 0;
+    for (int i = 0; i < n; i++) {
+        int si = PxPre_Find(&lib, names[i], PX_PRESET_GLOBAL);
+        if (si < 0) continue;                          /* scene-only entry: fine */
+        matched++;
+        const Look *a = &looks[i];
+        const Look *b = &lib.p[si].look;
+        CHECK(a->enabled == b->enabled);
+        CHECK_NEAR(a->sat,         b->sat,         0.01);
+        CHECK_NEAR(a->vibrance,    b->vibrance,    0.01);
+        CHECK_NEAR(a->bri,         b->bri,         0.01);
+        CHECK_NEAR(a->con,         b->con,         0.01);
+        CHECK_NEAR(a->gamma,       b->gamma,       1e-4);
+        CHECK_NEAR(a->temp,        b->temp,        0.5);
+        CHECK_NEAR(a->tint,        b->tint,        0.01);
+        CHECK_NEAR(a->r_gain,      b->r_gain,      0.01);
+        CHECK_NEAR(a->g_gain,      b->g_gain,      0.01);
+        CHECK_NEAR(a->b_gain,      b->b_gain,      0.01);
+        CHECK_NEAR(a->shadows,     b->shadows,     0.01);
+        CHECK_NEAR(a->highlights,  b->highlights,  0.01);
+        CHECK_NEAR(a->black_level, b->black_level, 0.01);
+        CHECK_NEAR(a->white_point, b->white_point, 0.01);
+        CHECK_NEAR(a->clarity,     b->clarity,     0.01);
+        CHECK_NEAR(a->hue,         b->hue,         0.01);
+    }
+    /* the shared-name set must stay meaningful: Competitive, Vivid 300%,
+     * Night Ops, Cinematic Warm, Cool Clarity, High Contrast, OLED Punch */
+    CHECK(matched >= 7);
+
+    /* the two neutral entries (scene "Natural Neutral", seed "Neutral") are the
+     * exact no-op look even though their names differ */
+    {
+        int sc = -1, sd = PxPre_Find(&lib, "Neutral", PX_PRESET_GLOBAL);
+        for (int i = 0; i < n; i++) if (!strcmp(names[i], "Natural Neutral")) sc = i;
+        CHECK(sc >= 0 && sd >= 0);
+        Look neutral = (Look)LOOK_NEUTRAL_INIT;
+        CHECK(cm_looks_equal(&looks[sc], &neutral));
+        CHECK(cm_looks_equal(&lib.p[sd].look, &neutral));
+    }
+
+    /* the showcase maximum stays honest: what the name promises (300%) is what
+     * the values say, in BOTH libraries */
+    {
+        int sd = PxPre_Find(&lib, "Vivid 300%", PX_PRESET_GLOBAL);
+        int sc = -1;
+        for (int i = 0; i < n; i++) if (!strcmp(names[i], "Vivid 300%")) sc = i;
+        CHECK(sd >= 0 && sc >= 0);
+        CHECK_NEAR(lib.p[sd].look.sat, 300.0f, 0.01);
+        CHECK_NEAR(looks[sc].sat,      300.0f, 0.01);
+        /* no scene may claim 300% in its name while shipping a lower value */
+        for (int i = 0; i < n; i++)
+            if (strstr(names[i], "300"))
+                CHECK_NEAR(looks[i].sat, 300.0f, 0.01);
+    }
+
+    printf("  [PASS] Scene library and preset seed agree on every shared name (%d matched)\n", matched);
+}
+
 /* ---------------- 15. High vibrance must not green-shift neutrals ---------------- */
 static void test_high_vibrance_neutrals(void)
 {
@@ -1564,6 +1704,12 @@ static void test_preset_library(void)
     /* JSON form round trip (the import/export format) */
     n = PxPre_ToJson(&lib, jsn, sizeof jsn);
     CHECK(n > 10000);
+    /* the export must be STRICT JSON: no trailing comma before a closing
+     * bracket/brace (regression: "}}," was emitted after the last preset, so
+     * exported *.json files were only readable by our own tolerant parser) */
+    CHECK(strstr(jsn, ",\n  ]") == NULL);
+    CHECK(strstr(jsn, ",]") == NULL);
+    CHECK(strstr(jsn, ",}") == NULL);
     static PxPresetLib lib3;
     memset(&lib3, 0, sizeof lib3);
     CHECK(PxPre_FromJson(&lib3, jsn) == lib.n);
@@ -1681,6 +1827,7 @@ int main(void)
     test_ramp_write_planning();
     test_ramps_file_validation();
     test_shipped_presets();
+    test_scene_seed_consistency();
     test_high_vibrance_neutrals();
     test_requested_applied_state();
     test_transform_plan();
@@ -1693,6 +1840,6 @@ int main(void)
     test_preset_library();
     test_display_capabilities();
     printf("==================================================\n");
-    printf("ALL 25 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
+    printf("ALL 26 UNIT & INTEGRATION TEST SUITES PASSED - %d checks\n\n", g_checks);
     return 0;
 }

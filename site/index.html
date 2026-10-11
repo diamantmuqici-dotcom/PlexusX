@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PlexusX — Free Windows Gaming Display &amp; Visual Optimization Center</title>
-<meta name="description" content="PlexusX is a free, high-performance Windows gaming display and visual control center: 300% saturation, smart vibrance, hardware gamma ramps, 20+ game profiles, desktop crosshair, stretched 4:3 modes, and LAN phone remote. Anti-cheat safe. No account, no premium.">
+<meta name="description" content="PlexusX is a free, high-performance Windows gaming display and visual control center: 300% saturation, smart vibrance, hardware gamma ramps, 18 built-in game profiles, desktop crosshair, stretched 4:3 modes, and LAN phone remote. Anti-cheat safe. No account, no premium.">
 <meta property="og:title" content="PlexusX — Your Display. Your Colors. Your Games.">
 <meta property="og:description" content="Free gaming display and visual optimizer for Windows 10/11. Anti-cheat safe, no injection, zero telemetry.">
 <meta property="og:image" content="media/hero.jpg">
@@ -55,7 +55,7 @@
       <div class="hero-cta">
         <a class="btn btn-primary btn-lg" href="download/PlexusX.exe" download="PlexusX.exe">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-          Download Portable (448 KB)</a>
+          Download Portable EXE</a>
         <a class="btn btn-ghost btn-lg" href="download/PlexusX-Setup.exe" download="PlexusX-Setup.exe">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
           Download Setup (Installer)</a>
@@ -95,11 +95,11 @@
 <!-- ══════════ MARQUEE ══════════ -->
 <div class="marquee" aria-hidden="true">
   <div class="marquee-track">
-    <span>300% saturation</span><i>✦</i><span>smart vibrance</span><i>✦</i><span>20+ game profiles</span><i>✦</i>
+    <span>300% saturation</span><i>✦</i><span>smart vibrance</span><i>✦</i><span>18 built-in game profiles</span><i>✦</i>
     <span>desktop crosshair</span><i>✦</i><span>stretched 4:3 modes</span><i>✦</i><span>phone remote PIN</span><i>✦</i>
     <span>GPU gamma ramps</span><i>✦</i><span>display test patterns</span><i>✦</i><span>zero telemetry</span><i>✦</i>
     <span>crash restoration</span><i>✦</i><span>anti-cheat safe</span><i>✦</i><span>no accounts</span><i>✦</i>
-    <span>300% saturation</span><i>✦</i><span>smart vibrance</span><i>✦</i><span>20+ game profiles</span><i>✦</i>
+    <span>300% saturation</span><i>✦</i><span>smart vibrance</span><i>✦</i><span>18 built-in game profiles</span><i>✦</i>
     <span>desktop crosshair</span><i>✦</i><span>stretched 4:3 modes</span><i>✦</i><span>phone remote PIN</span><i>✦</i>
     <span>GPU gamma ramps</span><i>✦</i><span>display test patterns</span><i>✦</i><span>zero telemetry</span><i>✦</i>
     <span>crash restoration</span><i>✦</i><span>anti-cheat safe</span><i>✦</i><span>no accounts</span><i>✦</i>
@@ -129,7 +129,7 @@
       <article class="qcard reveal">
         <div class="qico qico-euro">€</div>
         <h3>Is it really completely free?</h3>
-        <p>Yes, all of it. Saturation 0-300%, vibrance, shadow/highlight curve shaping, 20+ game profiles,
+        <p>Yes, all of it. Saturation 0-300%, vibrance, shadow/highlight curve shaping, 18 built-in game profiles,
           crosshair overlay, resolution &amp; refresh manager, phone control, and diagnostics.
           No trial, no paywall, no fake premium lock.</p>
         <a href="#features" class="alink">Explore all features →</a>
@@ -198,9 +198,10 @@
 <section class="section section-alt" id="games">
   <div class="wrap">
     <p class="eyebrow reveal">PER-GAME PROFILES</p>
-    <h2 class="reveal">20+ Built-In Games. Automatic Switching.</h2>
+    <h2 class="reveal">18 Built-In Games. Automatic Switching.</h2>
     <p class="section-lead reveal">Pre-tuned starting profiles for competitive visibility and environmental clarity.
-      Automatically applies when the game is focused, and restores previous desktop settings when closed.</p>
+      Automatically applies when the game is focused, and restores previous desktop settings when closed.
+      The values shown here mirror the app's real built-in looks — they are starting points, not guarantees.</p>
 
     <div class="gallery reveal">
       <div class="game-grid" id="gameGrid" role="tablist" aria-label="Game presets">
@@ -223,8 +224,8 @@
           <div class="stage-sliders">
             <div class="ctrl">
               <label for="stSat">Saturation</label>
-              <input class="range" type="range" min="100" max="300" value="250" id="stSat">
-              <output class="mono" id="stSatVal">250%</output>
+              <input class="range" type="range" min="100" max="300" value="180" id="stSat">
+              <output class="mono" id="stSatVal">180%</output>
             </div>
             <div class="ctrl">
               <label for="stBri">Brightness</label>
@@ -233,18 +234,18 @@
             </div>
             <div class="ctrl">
               <label for="stCon">Contrast</label>
-              <input class="range" type="range" min="-50" max="50" value="14" id="stCon">
-              <output class="mono" id="stConVal">+14</output>
+              <input class="range" type="range" min="-50" max="50" value="16" id="stCon">
+              <output class="mono" id="stConVal">+16</output>
             </div>
             <div class="ctrl">
               <label for="stTemp">Temperature</label>
-              <input class="range" type="range" min="-50" max="50" value="4" id="stTemp">
-              <output class="mono" id="stTempVal">+4</output>
+              <input class="range" type="range" min="-50" max="50" value="-5" id="stTemp">
+              <output class="mono" id="stTempVal">-5</output>
             </div>
             <div class="ctrl">
               <label for="stGam">Gamma</label>
-              <input class="range" type="range" min="60" max="180" value="100" id="stGam">
-              <output class="mono" id="stGamVal">1.00</output>
+              <input class="range" type="range" min="60" max="180" value="94" id="stGam">
+              <output class="mono" id="stGamVal">0.94</output>
             </div>
           </div>
         </div>
@@ -389,13 +390,13 @@
           <div class="mock-tab" data-tab="scenes">
             <div class="mock-head"><div><h3>Looks Library</h3><p>Instant starting points for competitive visibility and environmental calibration.</p></div></div>
             <div class="scene-chips" id="mockScenes">
-              <button class="chip" data-sat="185">Competitive</button>
-              <button class="chip" data-sat="300">Ultra 300%</button>
-              <button class="chip" data-sat="235">Night Ops</button>
-              <button class="chip" data-sat="190">Snow Glare</button>
-              <button class="chip" data-sat="270">Smoke &amp; Dust</button>
-              <button class="chip" data-sat="220">Dark Room</button>
-              <button class="chip" data-sat="190">Bright Sky</button>
+              <button class="chip" data-sat="180">Competitive</button>
+              <button class="chip" data-sat="300">Vivid 300%</button>
+              <button class="chip" data-sat="180">Night Ops</button>
+              <button class="chip" data-sat="180">Snow Glare</button>
+              <button class="chip" data-sat="180">Smoke &amp; Dust</button>
+              <button class="chip" data-sat="180">Dark Room Lift</button>
+              <button class="chip" data-sat="180">Bright Sky</button>
               <button class="chip" data-sat="175">OLED Punch</button>
             </div>
           </div>
@@ -457,7 +458,7 @@
       <article class="feat reveal"><span class="fico">◐</span><h3>Saturation to 300%</h3><p>Neutral 100% to maximum 300% color boost. Applied smoothly over games, videos, and desktop.</p></article>
       <article class="feat reveal"><span class="fico">◑</span><h3>Smart Vibrance Engine</h3><p>Rec.709-weighted smart saturation that boosts muted colors while preventing skin-tone oversaturation.</p></article>
       <article class="feat reveal"><span class="fico">▦</span><h3>Hardware GPU Gamma Ramps</h3><p>Per-monitor 16-bit gamma ramps (0.40–2.50) with shadow toe lift, highlight compression and clarity S-curves. Linear controls run through the DWM color matrix, so dragging a slider never re-programs the GPU.</p></article>
-      <article class="feat reveal"><span class="fico">♻</span><h3>20+ Per-Game Starting Profiles</h3><p>Rust, CS2, Fortnite, Valorant, Tarkov, PUBG, Apex, Warzone, DayZ, Helldivers, and more. Auto-detects foreground process.</p></article>
+      <article class="feat reveal"><span class="fico">♻</span><h3>18 Per-Game Starting Profiles</h3><p>Rust, CS2, Fortnite, Valorant, Tarkov, PUBG, Apex, Warzone, DayZ, Helldivers, and more. Auto-detects foreground process.</p></article>
       <article class="feat reveal"><span class="fico">✛</span><h3>Anti-Aliased Crosshair Overlay</h3><p>Layered click-through overlay with 4x supersampling. 8 shapes, customizable size, gap, thickness, center dot, and opacity.</p></article>
       <article class="feat reveal"><span class="fico">▣</span><h3>Resolution &amp; Refresh Manager</h3><p>Switch resolutions, refresh rates (up to 500Hz+), and stretched 4:3 competitive presets with rollback safety.</p></article>
       <article class="feat reveal"><span class="fico">☀</span><h3>HDR Optimization &amp; Guide</h3><p>Eliminate washed-out SDR-in-HDR colors. Detailed guidance on how Windows HDR mapping works.</p></article>
@@ -536,20 +537,25 @@
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px;">
           <a class="btn btn-primary btn-lg" href="download/PlexusX.exe" download="PlexusX.exe">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-            Download Portable EXE (448 KB)</a>
+            Download Portable EXE</a>
           <a class="btn btn-ghost btn-lg" href="download/PlexusX-Setup.exe" download="PlexusX-Setup.exe">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-            Download Setup Installer (699 KB)</a>
+            Download Setup Installer</a>
         </div>
         <p class="dl-meta">Windows 10 / 11 x64 · NVIDIA · AMD · Intel · Apache-2.0</p>
       </div>
       <div class="dl-right">
         <div class="hash-card">
           <p class="hash-label">SHA-256 Checksums</p>
-          <p style="font-size:12px;color:#8a8a9a;margin-bottom:4px;">PlexusX.exe (Portable):</p>
-          <code class="mono hash-val" style="word-break:break-all;display:block;margin-bottom:12px;">9c74c6724d45f88abea251e9203b0c461cfda40701359a5b03d0d25e80f917fb</code>
-          <p style="font-size:12px;color:#8a8a9a;margin-bottom:4px;">PlexusX-Setup.exe (Installer):</p>
-          <code class="mono hash-val" style="word-break:break-all;display:block;">21d3602c3845cd306e6228c1368e0703d520cfd291f91023ae191761c69cb9b1</code>
+          <p style="font-size:12px;color:#8a8a9a;margin-bottom:4px;">PlexusX.exe (Portable):
+            <button class="mbtn tiny" id="copyShaPortable" type="button">Copy</button></p>
+          <!--HASH:PORTABLE--><code class="mono hash-val" id="shaPortable" style="word-break:break-all;display:block;margin-bottom:12px;">cda7ce3b5f7f2ca2bc57f5a0da0d5c3affd0d8416ea9cb65dbb9e48e7b2e3503</code>
+          <p style="font-size:12px;color:#8a8a9a;margin-bottom:4px;">PlexusX-Setup.exe (Installer):
+            <button class="mbtn tiny" id="copyShaSetup" type="button">Copy</button></p>
+          <!--HASH:SETUP--><code class="mono hash-val" id="shaSetup" style="word-break:break-all;display:block;">f3d27ee50e82bcfd75c29645bb47dbcf1cdcb2bf0bfbf5be63a012e6d0ef6767</code>
+          <p style="font-size:11px;color:#8a8a9a;margin-top:10px;">These are the checksums of the binaries this site serves
+            (<a href="download/SHA256SUMS.txt" style="color:inherit">SHA256SUMS.txt</a>), injected at deploy time.
+            Verify after downloading — instructions in the README.</p>
         </div>
       </div>
     </div>
@@ -622,6 +628,7 @@
 </footer>
 
 <script src="assets/color_engine.js"></script>
+<script src="assets/presets.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>
