@@ -64,6 +64,12 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          # The repo currently has Pages disabled (GET /pages -> 404), which made
+          # every deployment fail at this step, on main as well.  With the
+          # `pages: write` permission this action can enable Pages (Actions
+          # source) itself the first time it runs.
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
