@@ -283,12 +283,14 @@ void UiPhone_Build(void)
     } else {
         UiW(WT_DIV, 0, 248, 170, 986, 20, L"SERVER OFF");
         UiW(WT_LABEL, 0, 248, 194, 986, 20,
-            L"Start the server to show a pairing URL and PIN. The server binds the LAN interface only and never talks to the internet.");
+            L"Start the server to show a pairing URL and PIN. It listens on port 8777 of this PC's local network interfaces and never connects to the internet.");
     }
 
     UiW(WT_DIV, 0, 248, 690, 986, 20, L"SECURITY");
     UiW(WT_LABEL, 0, 248, 714, 986, 18,
         L"4-digit PIN is single use and trades for a random 128-bit session token. Five wrong attempts lock pairing for 30 seconds; sessions expire after 8 idle hours.");
+    UiW(WT_LABEL, 0, 248, 736, 986, 18,
+        L"The server makes no outbound connections. Anyone on the same network can reach the pairing page, so keep the PIN private and stop the server when not in use.");
 }
 
 /* ---------------- Settings ---------------- */

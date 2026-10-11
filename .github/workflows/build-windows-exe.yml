@@ -24,6 +24,17 @@ jobs:
           node scripts/site_parity.js --golden /tmp/parity.json
           cmp /tmp/parity.json site/parity.json
 
+      - name: Site preset parity vs the native built-in seed
+        run: |
+          gcc -std=gnu11 -Wall -Wextra -Werror -O2 -Iapp/src tests/preset_gen.c app/src/games/game_profile.c -o /tmp/preset_gen -lm
+          /tmp/preset_gen > /tmp/preset_seed.json
+          node scripts/preset_parity.js --golden /tmp/preset_seed.json
+
+      - name: Website DOM smoke test (no uncaught errors, real wiring)
+        run: |
+          npm install --no-save jsdom
+          node scripts/site_smoke.js
+
       - name: Run engine scenario tests (real engine + pipeline against mocked Win32, ASan + UBSan)
         run: sh tests/host/run.sh
 

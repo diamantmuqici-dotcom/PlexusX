@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+# ARCHIVED ONE-OFF — DO NOT RE-RUN.
+#
+# Historical record of the bulk preset retune that clamped every scene / game
+# sub-mode in app/src/games/game_preset_manager.c to saturation <= 180 and
+# vibrance <= 150 (and forced "Natural" modes to true neutral).  The result of
+# this migration is already committed in the source table.
+#
+# Re-running it now would be WRONG: it would flatten deliberate outliers such as
+# the "Vivid 300%" showcase preset (300/240 by design, parity-checked against
+# site/assets/presets.js) and it knows nothing about the scene<->seed
+# consistency rule enforced by tests/test_all.c.  Kept under scripts/ only to
+# document where the current preset values came from.
 import re
 
 with open('app/src/games/game_preset_manager.c', 'r') as f:

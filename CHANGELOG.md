@@ -1,5 +1,25 @@
 # PlexusX Changelog
 
+## Unreleased — Preset truth, website repair, honest download card
+
+### Fixed
+- **Website script abort (P0)**: `site/assets/app.js` referenced removed elements (`#stCode`, `#stCopy`, `#sha`, `#copySha`), throwing a TypeError during load that killed everything after it — scroll-reveal (most sections stayed at `opacity:0`), app-mock navigation, scene chips, crosshair picker, toasts and the profile recommender were all dead. All optional wiring is now null-checked, and the dead "preset code" (CHX-…) feature was removed. A new jsdom smoke test (`scripts/site_smoke.js`, wired into both CI workflows) fails the build on any uncaught page error.
+- **Wrong brand in comparator**: the interactive comparator tag rendered "CHROMAX · 240%" instead of "PLEXUSX".
+- **Invalid preset exports**: `PxPre_ToJson` emitted a trailing comma after the last preset, so exported `*.json` libraries were rejected by any strict JSON parser (only PlexusX's own tolerant reader accepted them). The export is now strict JSON, with a regression check in `tests/test_all.c`.
+- **Misleading preset name**: the scene "Ultra 300%" shipped 180% saturation (a casualty of the archived bulk clamp `update_presets.py`, now moved to `scripts/archive_update_presets.py` with a do-not-run header). It is renamed "Vivid 300%" and carries the real 300/240 showcase values, identical in the scene table and the preset seed.
+- **Divergent same-name presets**: "Competitive" and "Night Ops" had different values in the scene library vs the preset seed (185/160 vs 180/150; 235/190 vs 180/150). Both tables now agree; `tests/test_all.c` suite 14b enforces same-name ⇒ same-look across the two native tables.
+- **Website preset drift**: the browser preview's preset buttons ("Competitive" 235/120, "Night Ops" 265/150, "Max Chroma" 300/300 …) matched nothing the app ships. `site/assets/presets.js` (new) mirrors the native seed exactly; `scripts/preset_parity.js` + `tests/preset_gen.c` prove it in CI. The preview also starts at the true neutral baseline (the old default claimed to be "the app's default boost" — the app actually starts neutral), its temperature slider now spans the 3000–10000 K the native UI exposes, and it degrades gracefully when 2D canvas is unavailable.
+- **Website game gallery / recommender fiction**: gallery stats (sat 235–265) and recommender outputs (sat up to 260) advertised values no built-in profile uses. Both now mirror the real shipped looks from `game_preset_manager.c` (e.g. Rust Competitive 180/150, gamma 0.94; Tarkov Dark Room 0.76), and recommendations name the built-in preset they match.
+- **Stale download facts**: README and website published SHA-256 hashes (`9c74c6…`, `21d360…`) and sizes (448/699 KB) that matched neither the committed binaries nor `SHA256SUMS.txt`. The pages now show the real hashes (`192c35…`, `cb56d1…`) with copy buttons, the Pages workflow injects the checksums of the binaries each deployment actually serves, and hard-coded sizes were dropped from buttons. "20+ game profiles" corrected to the real 18 built-ins everywhere.
+- **Phone-server claims**: settings page and README said the LAN server "binds the LAN interface only"; it binds `INADDR_ANY` (all local interfaces, port 8777). Texts now state the real behavior plus the practical guidance (PIN privacy, stop when unused). No behavioral change.
+
+### Added
+- `site/assets/presets.js` — website mirror of the native built-in preset seed, with honest per-preset descriptions.
+- `tests/preset_gen.c` + `scripts/preset_parity.js` — CI-enforced site↔native preset parity (8 presets × 17 fields).
+- `scripts/site_smoke.js` — jsdom smoke test: executes the shipped site scripts, verifies reveal wiring, mock navigation, scene chips, recommender values, checksum card vs `SHA256SUMS.txt`, and graceful preview degradation. Negative-controlled against the original `#stCopy` regression.
+- `tests/test_all.c` suite 14b (scene↔seed consistency, "300%" naming honesty, strict-JSON export) — 26 suites total.
+- Toast notifications on the website are announced to screen readers (`role="status"` + `aria-live="polite"`).
+
 ## Unreleased — Hardware health reassertion
 
 - Added a lightweight display-pipeline health check to detect when Windows or a display driver silently drops the active Magnification color effect or a PlexusX-owned gamma LUT.

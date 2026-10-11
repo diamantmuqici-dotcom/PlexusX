@@ -7,7 +7,7 @@
 
 > **Your Display. Your Colors. Your Games.**  
 > A free, high-performance Windows gaming display and visual control center.  
-> Pushes monitor saturation to **300%**, with smart vibrance, 16-bit hardware GPU gamma ramps, 20+ game profiles, an anti-aliased desktop crosshair, stretched 4:3 display modes, secure LAN phone remote control, and full-screen monitor test patterns.
+> Pushes monitor saturation to **300%**, with smart vibrance, 16-bit hardware GPU gamma ramps, 18 built-in game profiles, an anti-aliased desktop crosshair, stretched 4:3 display modes, secure LAN phone remote control, and full-screen monitor test patterns.
 
 **100% Free · Zero Cheating · Zero DLL Injection · Anti-Cheat Safe**
 
@@ -17,11 +17,11 @@
 
 Most gaming monitor tools fall into one of two traps: they are either rudimentary 1-slider utilities, or commercial software bloated with artificial paywalls, accounts, subscription prompts, and background telemetry.
 
-**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (~448 KB) with near-zero idle CPU footprint:
+**PlexusX** provides a complete, unified visual suite in a single lightweight Windows executable (~639 KB) with near-zero idle CPU footprint:
 
 * **300% Saturation Engine** — Neutral 100% up to 300% Rec.709 chroma boost. Vibrance is a *bounded* extra boost (it no longer multiplies with saturation past the DWM weight limit). Neutrals stay neutral; the old independent-clamp path that painted high vibrance green is gone.
 * **Decoupled Display Pipeline** — Linear controls (saturation, vibrance, hue, temperature, tint, RGB gain, brightness, contrast, black level, white point) run through a 5×5 DWM color matrix, so dragging them never re-programs the GPU. Only the non-linear tone curves (gamma power curve, shadow toe lift, highlight shoulder compression, clarity/dehaze S-curve) are written as monotonic 16-bit lookup tables via `SetDeviceGammaRamp` — and only when a curve actually changes.
-* **20+ Per-Game Starting Profiles** — Rust, CS2, Fortnite, Valorant, Escape from Tarkov, PUBG, Apex Legends, Call of Duty / Warzone, Overwatch 2, Rainbow Six Siege, Minecraft, GTA V, DayZ, Helldivers 2, The Finals, and custom game executables.
+* **18 Per-Game Starting Profiles** — Rust, CS2, Fortnite, Valorant, Escape from Tarkov, PUBG, Apex Legends, Call of Duty / Warzone, Overwatch 2, Rainbow Six Siege, Minecraft, GTA V, DayZ, Helldivers 2, The Finals, and custom game executables.
 * **Stretched 4:3 & Refresh Rate Manager** — Instant switching to popular competitive stretched resolutions (`1280x960`, `1440x1080`, `1600x1200`), 16:10, and high-refresh modes (up to 500Hz+) with automatic rollback safety.
 * **Desktop Crosshair Overlay** — 4x supersampled layered overlay (`WS_EX_LAYERED | WS_EX_TRANSPARENT`). 8 shapes (Cross, Dot, Circle, Square, Plus, Chevron, T, T-Type), custom colors, and hotkey toggle (`Ctrl+Alt+X`).
 * **Multi-Monitor Management** — Target specific monitors independently (`DISPLAY1`, `DISPLAY2`) or synchronize across all displays. Includes a full-screen "Identify Displays" overlay.
@@ -41,7 +41,7 @@ Most gaming monitor tools fall into one of two traps: they are either rudimentar
   <h3>Global Color Engine & Hardware Gamma Curve</h3>
   <img src="site/media/screenshot-color.png" width="850" alt="PlexusX Color Engine">
   <br><br>
-  <h3>Game Profiles Library (20+ Pre-Configured Titles)</h3>
+  <h3>Game Profiles Library (18 Pre-Configured Titles)</h3>
   <img src="site/media/screenshot-games.png" width="850" alt="PlexusX Games Library">
   <br><br>
   <h3>Anti-Aliased Desktop Crosshair Overlay</h3>
@@ -71,10 +71,15 @@ It operates in the exact same legal space as the NVIDIA Control Panel, AMD Softw
 
 ## 📦 Downloads & Verification
 
-| Deliverable | Description | Size | SHA-256 Checksum |
+| Deliverable | Description | Size | SHA-256 Checksum (of the binaries committed in `site/download/`) |
 | :--- | :--- | :---: | :--- |
-| **`PlexusX.exe`** | Standalone Portable Executable | 448 KB | `9c74c6724d45f88abea251e9203b0c461cfda40701359a5b03d0d25e80f917fb` |
-| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 699 KB | `21d3602c3845cd306e6228c1368e0703d520cfd291f91023ae191761c69cb9b1` |
+| **`PlexusX.exe`** | Standalone Portable Executable | 639 KB | `cda7ce3b5f7f2ca2bc57f5a0da0d5c3affd0d8416ea9cb65dbb9e48e7b2e3503` |
+| **`PlexusX-Setup.exe`** | Setup Installer (with Shortcuts) | 921 KB | `f3d27ee50e82bcfd75c29645bb47dbcf1cdcb2bf0bfbf5be63a012e6d0ef6767` |
+
+The checksums above match [`site/download/SHA256SUMS.txt`](site/download/SHA256SUMS.txt) in this repository.
+The website rebuilds the executables during its GitHub Pages deployment and injects the freshly computed
+SHA-256 values into the download card, so the hashes shown on <https://plexusx.lol/> always describe the
+binaries that site serves.
 
 ### Verifying File Integrity
 
@@ -166,7 +171,7 @@ Control your monitor's display settings from your smartphone or tablet without l
 1. In PlexusX, navigate to **Settings** and toggle **LAN Phone Remote Server**.
 2. Note the local URL (e.g., `http://192.168.1.100:8777`) and the random 4-digit **Pairing PIN**.
 3. Open the URL in your phone's web browser, enter the PIN, and immediately adjust saturation, vibrance, gamma, brightness, and quick presets.
-4. **Security Note**: The server binds locally to your private LAN (`0.0.0.0`). It is never accessible from the public internet.
+4. **Security Note**: The server listens on port 8777 on this PC's local network interfaces (`INADDR_ANY`) and never makes outbound connections. It is not reachable from the public internet unless you explicitly port-forward it on your router — keep the PIN private and stop the server when you are done.
 
 ---
 
@@ -213,6 +218,18 @@ sh tests/host/run.sh
 # 16-bit LUT entries within one rounding step
 gcc -std=gnu11 -O2 -Iapp/src tests/parity_gen.c -o /tmp/parity -lm && /tmp/parity > /tmp/parity.json
 node scripts/site_parity.js --golden /tmp/parity.json
+
+# site preset parity: the built-in presets advertised by the website
+# (site/assets/presets.js) must be field-for-field identical to the native
+# seed (app/src/presets/preset_store.h) — golden generated from the C code
+gcc -std=gnu11 -O2 -Iapp/src tests/preset_gen.c app/src/games/game_profile.c -o /tmp/preset_gen -lm
+/tmp/preset_gen > /tmp/preset_seed.json
+node scripts/preset_parity.js --golden /tmp/preset_seed.json
+
+# website DOM smoke test (jsdom): loads index.html + preview.html, executes the
+# shipped scripts and fails on any uncaught error, dead wiring, stale preset
+# value or checksum mismatch — needs `npm install --no-save jsdom` first
+node scripts/site_smoke.js
 ```
 
 ### Game Output Path — What PlexusX Can and Cannot Control
