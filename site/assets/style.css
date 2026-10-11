@@ -269,6 +269,88 @@ p{margin:0 0 1em}
 .preset-code{flex:1;min-width:190px;background:#101018;border:1px dashed #3a3a4c;color:#d7ff8a;
   padding:11px 13px;border-radius:10px;font-size:13px;letter-spacing:.03em}
 
+/* ── recommender ── */
+.rec-tool {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 30px;
+}
+@media (min-width: 768px) {
+  .rec-tool { flex-direction: row; }
+}
+.rec-form, .rec-result {
+  flex: 1;
+}
+.rec-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+.rec-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.rec-field label {
+  font-size: 13px;
+  color: var(--tx2);
+  font-weight: 500;
+}
+.rec-field select {
+  background: var(--bg3);
+  color: var(--tx);
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 14px;
+}
+.rec-field select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.rec-result {
+  background: var(--bg3);
+  border-radius: 8px;
+  padding: 20px;
+  border: 1px solid var(--bd);
+}
+.rec-result h3 {
+  color: var(--accent);
+  margin: 0 0 10px 0;
+  font-size: 18px;
+}
+.rec-desc {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 15px;
+}
+.rec-caveat {
+  font-size: 13px;
+  background: rgba(255, 60, 60, 0.1);
+  color: #ff8888;
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  display: none;
+}
+.rec-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.rec-stat {
+  font-size: 14px;
+  background: var(--bg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--bd);
+}
+
 /* ── app mock ── */
 .mock{
   border:1px solid var(--line);border-radius:20px;overflow:hidden;background:#101016;

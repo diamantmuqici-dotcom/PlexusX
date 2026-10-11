@@ -253,6 +253,70 @@
   </div>
 </section>
 
+<!-- ══════════ RECOMMENDER ══════════ -->
+<section class="section" id="recommender">
+  <div class="wrap">
+    <p class="eyebrow reveal">PROFILE RECOMMENDER</p>
+    <h2 class="reveal">Find Your Starting Point</h2>
+    <p class="section-lead reveal">Select your game and display setup to receive a functional, deterministic profile recommendation. No magic AI, just documented rules.</p>
+    <div class="rec-tool reveal">
+      <div class="rec-form">
+        <div class="rec-field">
+          <label for="recGame">Game</label>
+          <select id="recGame">
+            <option value="cs2">Counter-Strike 2</option>
+            <option value="rust">Rust</option>
+            <option value="valorant">Valorant</option>
+            <option value="tarkov">Escape from Tarkov</option>
+            <option value="fortnite">Fortnite</option>
+            <option value="warzone">Warzone</option>
+            <option value="other">Other / Not Listed</option>
+          </select>
+        </div>
+        <div class="rec-field">
+          <label for="recPriority">Priority</label>
+          <select id="recPriority">
+            <option value="competitive">Competitive Visibility</option>
+            <option value="balanced">Balanced</option>
+            <option value="natural">Natural Color</option>
+          </select>
+        </div>
+        <div class="rec-field">
+          <label for="recEnv">In-Game Environment</label>
+          <select id="recEnv">
+            <option value="daylight">Daylight / Bright</option>
+            <option value="dark">Dark / Night / Shadows</option>
+            <option value="indoor">Indoor / Mixed</option>
+            <option value="snow">Snow / Extremely Bright</option>
+            <option value="forest">Forest / Foliage</option>
+          </select>
+        </div>
+        <div class="rec-field">
+          <label for="recHdr">Display HDR State</label>
+          <select id="recHdr">
+            <option value="sdr">SDR (Standard Dynamic Range)</option>
+            <option value="hdr">HDR Enabled</option>
+            <option value="unknown">I don't know</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="recBtn">Get Recommendation</button>
+      </div>
+      <div class="rec-result" id="recResult" style="display:none;">
+        <h3 id="recTitle">Recommended Profile</h3>
+        <p class="rec-desc" id="recDesc">Reason goes here.</p>
+        <div class="rec-caveat" id="recCaveat">Caveats go here.</div>
+        <div class="rec-stats">
+          <div class="rec-stat"><span class="mono">Brightness:</span> <span id="recBri"></span></div>
+          <div class="rec-stat"><span class="mono">Contrast:</span> <span id="recCon"></span></div>
+          <div class="rec-stat"><span class="mono">Saturation:</span> <span id="recSat"></span></div>
+          <div class="rec-stat"><span class="mono">Gamma:</span> <span id="recGam"></span></div>
+        </div>
+        <p style="font-size:12px;color:#8a8a9a;margin-top:10px;">This is a starting point. Adjust to your display's characteristics in PlexusX.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ══════════ APP MOCK ══════════ -->
 <section class="section" id="app">
   <div class="wrap">

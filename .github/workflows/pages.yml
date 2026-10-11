@@ -1,0 +1,53 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: ["main", "arena/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  test_and_deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Parity Tests
+        run: |
+          gcc -std=gnu11 -Wall -Wextra -Werror -O2 -Iapp/src tests/parity_gen.c -o /tmp/parity_gen -lm
+          /tmp/parity_gen > site/parity.json
+          node scripts/site_parity.js
+
+      - name: Build Windows binaries (for download links)
+        run: |
+          pip install ziglang
+          cd app && make clean && make
+          cd ../site/download && sha256sum PlexusX.exe PlexusX-Setup.exe > SHA256SUMS.txt
+          
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'site'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
