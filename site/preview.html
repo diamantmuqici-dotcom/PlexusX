@@ -64,7 +64,15 @@
         <label class="btn btn-sm btn-ghost" style="cursor:pointer">Load your own image
           <input type="file" id="file" accept="image/*" hidden>
         </label>
-        <button class="btn btn-sm btn-ghost" id="sceneBtn" type="button">Procedural scene</button>
+        <select id="sceneSelect" class="btn btn-sm btn-ghost" style="appearance:none; cursor:pointer;">
+          <option value="procedural">Procedural scene</option>
+          <option value="media/scene-cs2.jpg">CS2 (Daylight)</option>
+          <option value="media/scene-rust.jpg">Rust (Mixed)</option>
+          <option value="media/scene-valorant.jpg">Valorant (Competitive)</option>
+          <option value="media/scene-tarkov.jpg">Tarkov (Low-Light)</option>
+          <option value="media/scene-fortnite.jpg">Fortnite (Vibrant)</option>
+          <option value="media/scene-warzone.jpg">Warzone (Cinematic)</option>
+        </select>
         <button class="btn btn-sm btn-primary" id="resetBtn" type="button">Reset all</button>
       </div>
     </div>

@@ -342,3 +342,67 @@ $$(".reveal").forEach(el => io.observe(el));
 /* ---------- download ping ---------- */
 $$('a[href*=".exe"]').forEach(a =>
   a.addEventListener("click", () => toast("Download started — verify the SHA-256 after ✓")));
+
+/* ---------- Profile Recommender ---------- */
+const recBtn = $("#recBtn");
+if (recBtn) {
+  recBtn.addEventListener("click", () => {
+    const game = $("#recGame").value;
+    const prio = $("#recPriority").value;
+    const env = $("#recEnv").value;
+    const hdr = $("#recHdr").value;
+    
+    let sub = "Balanced";
+    let desc = "";
+    let caveat = "";
+    let lk = { bri: 100, con: 100, sat: 100, gam: 1.0 };
+    
+    // Deterministic rules
+    if (prio === "competitive") {
+      sub = "Competitive Visibility";
+      desc = "Maximizes player model contrast against the environment. Uses higher saturation to distinguish materials.";
+      lk = { bri: 106, con: 116, sat: 245, gam: 0.94 };
+    } else if (prio === "natural") {
+      sub = "Natural";
+      desc = "Preserves original artistic intent while ensuring safe black levels. No heavy saturation.";
+      lk = { bri: 100, con: 100, sat: 100, gam: 1.0 };
+    } else {
+      // Balanced
+      if (env === "dark") {
+        sub = "Low-Light / Night";
+        desc = "Elevates shadows without blowing out UI highlights. Modest contrast bump.";
+        lk = { bri: 125, con: 112, sat: 230, gam: 0.76 };
+      } else if (env === "snow") {
+        sub = "Snow / Bright";
+        desc = "Restrains blinding highlights and adjusts temperature to reduce eye strain in bright environments.";
+        lk = { bri: 92, con: 118, sat: 185, gam: 1.05 };
+      } else if (env === "forest") {
+        sub = "Forest";
+        desc = "Pulls out green/brown separation and slightly lifts mid-tones to see into foliage.";
+        lk = { bri: 105, con: 115, sat: 260, gam: 0.96 };
+      } else {
+        sub = "Daylight / Mixed";
+        desc = "A solid all-around profile. Safe for indoor and outdoor environments.";
+        lk = { bri: 104, con: 112, sat: 220, gam: 0.98 };
+      }
+    }
+    
+    if (hdr === "hdr") {
+      caveat = "Note: HDR displays require Windows Advanced Color. Some legacy gamma features (like Shadows/Highlights sliders) will not apply in HDR mode.";
+      $("#recCaveat").style.display = "block";
+      $("#recCaveat").textContent = caveat;
+    } else {
+      $("#recCaveat").style.display = "none";
+    }
+    
+    $("#recTitle").textContent = sub;
+    $("#recDesc").textContent = desc;
+    $("#recBri").textContent = lk.bri + "%";
+    $("#recCon").textContent = lk.con + "%";
+    $("#recSat").textContent = lk.sat + "%";
+    $("#recGam").textContent = lk.gam.toFixed(2);
+    
+    $("#recResult").style.display = "block";
+    toast("Recommendation generated");
+  });
+}

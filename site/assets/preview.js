@@ -180,7 +180,20 @@
     look = E.neutral(); Object.assign(look, { sat: 150, vibrance: 120 });
     syncInputs(); schedule();
   });
-  document.getElementById("sceneBtn").addEventListener("click", () => { drawScene(); schedule(); });
+  const sceneSelect = document.getElementById("sceneSelect");
+  if (sceneSelect) {
+    sceneSelect.addEventListener("change", () => {
+      if (sceneSelect.value === "procedural") {
+        drawScene();
+        schedule();
+      } else {
+        const img = new Image();
+        img.onload = () => { setBaseFromImage(img); schedule(); };
+        img.src = sceneSelect.value;
+      }
+    });
+  }
+
   document.getElementById("file").addEventListener("change", e => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
